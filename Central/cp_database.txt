@@ -1,0 +1,3 @@
+CP001,C/Italia 5,0.54
+CP002,Gran Vía 2,0.54
+MAD01,C/Serrano 10,0.60
