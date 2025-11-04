@@ -1,34 +1,40 @@
-# Importaciones estándar para la concurrencia, sockets, argumentos y refresco de pantalla
-import socket
 import sys
-import threading
-import time
 import os
-# Importaciones para la comunicación por streaming de eventos con Kafka
-import json 
-from confluent_kafka import Producer, Consumer, KafkaError
+import json
 import uuid
+import socket
+import signal
+import threading
+import asyncio
+import time
+from confluent_kafka import Producer, Consumer, KafkaError
 
-# Constantes para colores
+# Colores
 VERDE = '\033[92m'
 NARANJA = '\033[93m'
 ROJO = '\033[91m'
 GRIS = '\033[90m'
 RESET = '\033[0m'
 
-# Almacenamiento del estado de los Puntos de Recarga (CPs)
+# Estado CPs
 charging_points = {}
 
-# Lock para la estructura de datos, previene condiciones de carrera y corrupción de datos
-# asegurando la "resiliencia"
+# Kafka consumers se ejecutan en hilos
 db_lock = threading.Lock()
 
-# Variable global del productor Kafka, para poder enviar mensajes de respuesta
+# Kafka producer global
 kafka_producer = None
 
+# Eventos para parada limpia
+stop_event_threads = threading.Event()   # para hilos
+stop_event_async = None                  # será asyncio.Event()
+
+
+# Funciones de BD / panel
 def load_database(filename="cp_database.txt"):
     """
     Carga los CPs conocidos desde un archivo de texto al iniciar
+    Formato esperado por línea: cp_id,location,price
     """
     print(f"[Info] Cargando base de datos de CPs desde {filename}...")
     try:
@@ -39,8 +45,10 @@ def load_database(filename="cp_database.txt"):
                     if len(parts) >= 3:
                         cp_id = parts[0]
                         location = parts[1]
-                        price = float(parts[2])
-                        
+                        try:
+                            price = float(parts[2])
+                        except:
+                            price = 0.50
                         with db_lock:
                             charging_points[cp_id] = {
                                 "location": location,
@@ -50,28 +58,25 @@ def load_database(filename="cp_database.txt"):
                                 "consumo": 0.0,
                                 "importe": 0.0
                             }
-        # Si todo es correcto
         print(f"[Info] Cargados {len(charging_points)} CPs.")
     except FileNotFoundError:
         print(f"[Error] No se encontró el archivo {filename}. Empezando con 0 CPs.")
     except Exception as e:
         print(f"[Error] Al cargar {filename}: {e}")
 
-def display_panel():
+async def display_panel():
     """
-    Un hilo dedicado a refrescar y mostrar el panel de control
-    en la terminal cada 2 segundos.
+    Coroutine que refresca el panel cada 2s
     """
-    
-    while True:
+    while not stop_event_async.is_set():
+        os.system('cls' if os.name == 'nt' else 'clear')
         print("************************************************************")
-        print(f"*** {VERDE}     PANEL DE MONOTORIZACIÓN         {RESET} ***")
+        print(f"*** {VERDE}     PANEL DE MONITORIZACIÓN         {RESET} ***")
         print("************************************************************")
         
         with db_lock:
             if not charging_points:
                 print("No hay Puntos de Recarga (CPs) registrados en la BD.")
-            
             cp_ids = sorted(charging_points.keys())
 
             for cp_id in cp_ids:
@@ -100,27 +105,37 @@ def display_panel():
 
         print("--- APLICATION MESSAGES ---")
         print("CENTRAL system status OK")
-        
-        # Refrescar cada dos segundos
-        time.sleep(2)
+        # esperar 2 segundos
+        await asyncio.sleep(2)
 
-def handle_client(conn, addr):
-    """
-    Esta función se ejecuta en su propio hilo por cada cliente
-    que se conecta al socket del servidor
-    """
-    print(f"\n[Nueva Conexión] Recibida conexión de: {addr[0]}:{addr[1]}")
+
+# Comunicación sockets
+async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    addr = writer.get_extra_info('peername')
+    print(f"\n[Nueva Conexión] Recibida conexión de: {addr}")
 
     cp_id_conectado = None
 
     try:
-        while True:
-            data = conn.recv(1024)
-            if not data:
-                print(f"[Desconexión] Cliente {addr[0]}:{addr[1]} se ha desconectado.")
+        while not stop_event_async.is_set():
+            # intentar leer una línea, si no hay newline, hacer read
+            try:
+                linea = await asyncio.wait_for(reader.readline(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # timeout para permitir comprobar stop_event_async periódicamente
+                continue
+
+            if not linea:
+                print(f"[Desconexión] Cliente {addr} se ha desconectado.")
                 break
-            
-            message = data.decode('utf-8')
+
+            # Decodificar y procesar
+            message = linea.decode('utf-8').rstrip('\n').rstrip('\r')
+            if not message:
+                # si viene vacío, continuar
+                continue
+
+            print(f"[RX] {addr}: {message}")
             parts = message.split('#')
             response = "ACK"
 
@@ -164,30 +179,40 @@ def handle_client(conn, addr):
                             print(f"[Recuperado] CP '{cp_id}' vuelve a estar Activo.")
                 response = "ACK: HEALTHY Recibido"
 
-            elif not parts[0] in ["REGISTER", "FAULT", "HEALTHY"]:
-                print(f"[Mensaje] Mensaje no reconocido de {addr[0]}: {message}")
+            elif message.upper() == "FIN" or parts[0].upper() == "FIN":
+                response = "ADIOS"
+                writer.write((response + "\n").encode('utf-8'))
+                await writer.drain()
+                print("[FIN] Cliente pidió terminar conexión")
+                break
+
+            else:
+                print(f"[Mensaje] Mensaje no reconocido de {addr}: {message}")
                 response = "NACK: Mensaje no reconocido"
 
-            conn.sendall(response.encode('utf-8'))
+            # Enviar respuesta
+            writer.write((response + "\n").encode('utf-8'))
+            await writer.drain()
 
-    except socket.error:
-        # Silenciamos los errores de "conexión cerrada" que son normales
-        print(f"[Info] Conexión con {addr[0]} perdida o cerrada.")
-
-    # Detecta cuándo un monitor se desconecta y actualiza el estado del CP a "desconectado"
+    except (asyncio.IncompleteReadError, ConnectionResetError):
+        print(f"[Info] Conexión con {addr} perdida o cerrada.")
+    except Exception as e:
+        print(f"[Error] Excepción en handle_client: {e}")
     finally:
         if cp_id_conectado:
             with db_lock:
                 if cp_id_conectado in charging_points and charging_points[cp_id_conectado]['state'] == "Activado":
                     charging_points[cp_id_conectado]['state'] = "DESCONECTADO"
                     print(f"[Estado] CP '{cp_id_conectado}' pasa a DESCONECTADO.")
-        
-        conn.close()
-        print(f"[Conexión Cerrada] Hilo para {addr[0]}:{addr[1]} finalizado.")
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except:
+            pass
+        print(f"[Conexión Cerrada] Hilo para {addr} finalizado.")
 
 
-# FUNCIONES KAFKA
-
+# Funciones Kafka
 def send_kafka_message(topic, message_data):
     """
     Función de ayuda para enviar mensajes con el productor global
@@ -196,22 +221,17 @@ def send_kafka_message(topic, message_data):
     try:
         payload = json.dumps(message_data).encode('utf-8')
         kafka_producer.produce(topic, value=payload)
-        # No bloquear, solo disparar envío
-        kafka_producer.poll(0) 
-
+        kafka_producer.poll(0)  # no bloquear
     except Exception as e:
         print(f"[Error Kafka Produce] No se pudo enviar a {topic}: {e}")
 
-
-def kafka_requests_consumer(broker):
+def kafka_requests_consumer(broker, stop_evt: threading.Event):
     """ 
-    Hilo que escucha permanentemente el topic "requests"
+    Hilo que escucha permanentemente el topic "requests" 
     """
-
     print("[Kafka] Hilo consumidor de 'requests' iniciado.")
-    
-    # Bucle exterior: Recrea el consumidor si falla
-    while True:
+
+    while not stop_evt.is_set():
         consumer = None
         try:
             consumer_config = {
@@ -223,61 +243,60 @@ def kafka_requests_consumer(broker):
             consumer.subscribe(['requests'])
             print("[Kafka] Consumidor de 'requests' suscrito.")
 
-            # Bucle interior: Procesa mensajes
-            while True: 
+            while not stop_evt.is_set():
                 msg = consumer.poll(1.0)
-                if msg is None: continue
-                
+                if msg is None:
+                    continue
                 if msg.error():
                     err_code = msg.error().code()
                     if err_code == KafkaError.UNKNOWN_TOPIC_OR_PART:
                         print("[Kafka] Topic 'requests' no encontrado, re-intentando subscripción...")
-                        break # Rompe el bucle INTERIOR para recrear el consumidor
+                        break
                     else:
                         print(f"[Error Kafka Requests] {msg.error()}")
-                        continue # Ignora otros errores y sigue
+                        continue
 
-                # Mensaje válido
                 try:
                     request = json.loads(msg.value().decode('utf-8'))
-                    cp_id = request.get('cpId')
-                    driver_id = request.get('driverId')
-                    print(f"[Kafka Request] Recibida petición de {driver_id} para {cp_id}")
-
-                    # Lógica de autorización
-                    with db_lock:
-                        cp = charging_points.get(cp_id)
-                        
-                        if cp and cp['state'] == 'Activado':
-                            auth_message = {'cpId': cp_id, 'driverId': driver_id, 'action': 'AUTHORIZE'}
-                            send_kafka_message('commands', auth_message)
-                            print(f"[Kafka Command] Autorización enviada a {cp_id} para {driver_id}")
-                        else:
-                            reason = "CP no disponible o averiado" if cp else "CP desconocido"
-                            ticket_message = {'driverId': driver_id, 'cpId': cp_id, 'status': 'REJECTED', 'reason': reason}
-                            send_kafka_message('tickets', ticket_message)
-                            print(f"[Kafka Ticket] Petición rechazada para {driver_id} ({reason})")
-                
-                except json.JSONDecodeError:
+                except Exception:
                     print("[Error Kafka Requests] Mensaje con JSON inválido.")
-        
+                    continue
+
+                cp_id = request.get('cpId')
+                driver_id = request.get('driverId')
+                print(f"[Kafka Request] Recibida petición de {driver_id} para {cp_id}")
+
+                with db_lock:
+                    cp = charging_points.get(cp_id)
+
+                if cp and cp['state'] == 'Activado':
+                    auth_message = {'cpId': cp_id, 'driverId': driver_id, 'action': 'AUTHORIZE'}
+                    send_kafka_message('commands', auth_message)
+                    print(f"[Kafka Command] Autorización enviada a {cp_id} para {driver_id}")
+                else:
+                    reason = "CP no disponible o averiado" if cp else "CP desconocido"
+                    ticket_message = {'driverId': driver_id, 'cpId': cp_id, 'status': 'REJECTED', 'reason': reason}
+                    send_kafka_message('tickets', ticket_message)
+                    print(f"[Kafka Ticket] Petición rechazada para {driver_id} ({reason})")
+
         except Exception as e:
             print(f"[Error] Excepción grave en consumidor de 'requests': {e}")
         finally:
             if consumer:
                 consumer.close()
-            print("[Kafka] Consumidor 'requests' cerrado, reintentando en 3s...")
-            # Espera antes de recrear el consumidor
-            time.sleep(3) 
+            if not stop_evt.is_set():
+                print("[Kafka] Consumidor 'requests' cerrado, reintentando en 3s...")
+                time.sleep(3)
 
-def kafka_telemetry_consumer(broker):
+    print("[Kafka] Hilo consumidor 'requests' detenido.")
+
+def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
     """ 
-    Hilo que escucha permanentemente el topic "telemetry"
+    Hilo que escucha permanentemente el topic "telemetry" 
     """
-
     print("[Kafka] Hilo consumidor de 'telemetry' iniciado.")
 
-    while True:
+    while not stop_evt.is_set():
         consumer = None
         try:
             consumer_config = {
@@ -289,70 +308,145 @@ def kafka_telemetry_consumer(broker):
             consumer.subscribe(['telemetry'])
             print("[Kafka] Consumidor de 'telemetry' suscrito.")
 
-            while True:
+            while not stop_evt.is_set():
                 msg = consumer.poll(1.0)
-                if msg is None: continue
-                
+                if msg is None:
+                    continue
                 if msg.error():
                     err_code = msg.error().code()
                     if err_code == KafkaError.UNKNOWN_TOPIC_OR_PART:
                         print("[Kafka] Topic 'telemetry' no encontrado, re-intentando subscripción...")
-                        break # Rompe el bucle INTERIOR
+                        break
                     else:
                         print(f"[Error Kafka Telemetry] {msg.error()}")
                         continue
 
-                # Mensaje válido
                 try:
                     telemetry = json.loads(msg.value().decode('utf-8'))
-                    cp_id = telemetry.get('cpId')
-                    status = telemetry.get('status')
+                except Exception:
+                    print("[Error Kafka Telemetry] Mensaje con JSON inválido.")
+                    continue
 
-                    with db_lock:
-                        if cp_id not in charging_points:
-                            continue 
+                cp_id = telemetry.get('cpId')
+                status = telemetry.get('status')
 
-                        if status == 'CHARGING':
-                            charging_points[cp_id]['state'] = "Suministrando"
-                            charging_points[cp_id]['driver'] = telemetry.get('driverId')
-                            charging_points[cp_id]['consumo'] = telemetry.get('consumo_kw')
-                            charging_points[cp_id]['importe'] = telemetry.get('importe_eur')
+                with db_lock:
+                    if cp_id not in charging_points:
+                        continue
+
+                    if status == 'CHARGING':
+                        charging_points[cp_id]['state'] = "Suministrando"
+                        charging_points[cp_id]['driver'] = telemetry.get('driverId')
+                        charging_points[cp_id]['consumo'] = telemetry.get('consumo_kw', 0.0)
+                        charging_points[cp_id]['importe'] = telemetry.get('importe_eur', 0.0)
+                    
+                    elif status == 'COMPLETED':
+                        print(f"[Kafka Telemetry] Recibida finalización de {cp_id}")
+                        ticket_message = {
+                            'driverId': charging_points[cp_id]['driver'],
+                            'cpId': cp_id,
+                            'status': 'COMPLETED',
+                            'final_consumo_kw': telemetry.get('final_consumo_kw'),
+                            'final_importe_eur': telemetry.get('final_importe_eur')
+                        }
+                        send_kafka_message('tickets', ticket_message)
                         
-                        elif status == 'COMPLETED':
-                            print(f"[Kafka Telemetry] Recibida finalización de {cp_id}")
-                            ticket_message = {
-                                'driverId': charging_points[cp_id]['driver'],
-                                'cpId': cp_id,
-                                'status': 'COMPLETED',
-                                'final_consumo_kw': telemetry.get('final_consumo_kw'),
-                                'final_importe_eur': telemetry.get('final_importe_eur')
-                            }
-                            send_kafka_message('tickets', ticket_message)
-                            
-                            charging_points[cp_id]['state'] = "Activado"
-                            charging_points[cp_id]['driver'] = None
-                            charging_points[cp_id]['consumo'] = 0.0
-                            charging_points[cp_id]['importe'] = 0.0
+                        charging_points[cp_id]['state'] = "Activado"
+                        charging_points[cp_id]['driver'] = None
+                        charging_points[cp_id]['consumo'] = 0.0
+                        charging_points[cp_id]['importe'] = 0.0
 
-                except json.JSONDecodeError:
-                     print("[Error Kafka Telemetry] Mensaje con JSON inválido.")
-        
         except Exception as e:
             print(f"[Error] Excepción grave en consumidor de 'telemetry': {e}")
         finally:
             if consumer:
                 consumer.close()
-            print("[Kafka] Consumidor 'telemetry' cerrado, reintentando en 3s...")
-            time.sleep(3)
+            if not stop_evt.is_set():
+                print("[Kafka] Consumidor 'telemetry' cerrado, reintentando en 3s...")
+                time.sleep(3)
 
+    print("[Kafka] Hilo consumidor 'telemetry' detenido.")
+
+
+async def main_async(listen_port: int, kafka_broker: str):
+    global kafka_producer, stop_event_async
+
+    stop_event_async = asyncio.Event()
+
+    # 1. Cargar DB
+    load_database()
+
+    # 2. Inicializar Kafka producer
+    try:
+        kafka_producer = Producer({'bootstrap.servers': kafka_broker})
+        print(f"[Kafka] Productor conectado a {kafka_broker}")
+    except Exception as e:
+        print(f"[Error Kafka] No se pudo conectar el Productor: {e}")
+        return
+
+    # 3. Lanzar panel
+    panel_task = asyncio.create_task(display_panel())
+
+    # 4. Lanzar consumidores Kafka en hilos
+    req_thread = threading.Thread(target=kafka_requests_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
+    tel_thread = threading.Thread(target=kafka_telemetry_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
+    req_thread.start()
+    tel_thread.start()
+
+    # 5. Iniciar servidor TCP asíncrono
+    server = await asyncio.start_server(handle_client, '0.0.0.0', listen_port, reuse_address=True, backlog=16)
+    addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
+    print(f"\n*** EV_Central iniciada (asyncio + Kafka) ***")
+    print(f"Escuchando Sockets en: {addrs}")
+    print("El panel de control se está mostrando. Esperando conexiones...")
+
+    # Registrar manejadores de señal
+    loop = asyncio.get_running_loop()
+
+    def _signal_handler():
+        print("[SINAL] Señal de parada recibida. Iniciando apagado limpio...")
+        stop_event_threads.set()   # para hilos
+        # set asyncio event desde hilo/handler
+        loop.call_soon_threadsafe(stop_event_async.set)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _signal_handler)
+        except NotImplementedError:
+            signal.signal(sig, lambda *_: _signal_handler())
+
+    async with server:
+        await stop_event_async.wait()
+        print("[MAIN] stop_event_async activado, cerrando servidor...")
+        server.close()
+        await server.wait_closed()
+
+    # Esperar tareas y cerrar hilos Kafka
+    print("[MAIN] Esperando a que los hilos Kafka terminen...")
+    stop_event_threads.set()
+    req_thread.join(timeout=5)
+    tel_thread.join(timeout=5)
+
+    # Cancelar panel si sigue vivo
+    if not panel_task.done():
+        panel_task.cancel()
+        try:
+            await panel_task
+        except asyncio.CancelledError:
+            pass
+
+    # Vaciar productor Kafka
+    try:
+        kafka_producer.flush(timeout=10)
+    except Exception as e:
+        print(f"[Kafka] Error al flush producer: {e}")
+
+    print("[CENTRAL] Apagado limpio completado.")
 
 def main():
-    global kafka_producer # Indicar que usaremos la variable global
-
-    # 1. Validar argumentos (AHORA 2)
     if len(sys.argv) < 3:
         print("Error: Debes especificar un puerto y el broker de Kafka.")
-        print("Uso: python EV_Central.py <puerto_socket> <kafka_broker>")
+        print("Uso: python EV_Central_async.py <puerto_socket> <kafka_broker_host:port>")
         return
 
     try:
@@ -362,58 +456,10 @@ def main():
         print("Error: El puerto debe ser un número entero.")
         return
 
-    # 1.b. Cargar la "Base de Datos"
-    load_database()
-
-    # Inicializar Kafka Producer
     try:
-        kafka_producer = Producer({'bootstrap.servers': kafka_broker})
-        print(f"[Kafka] Productor conectado a {kafka_broker}")
-    except Exception as e:
-        print(f"[Error Kafka] No se pudo conectar el Productor: {e}")
-        return
-
-    # 2. Iniciar el hilo del Panel de Control
-    panel_thread = threading.Thread(target=display_panel, daemon=True)
-    panel_thread.start()
-
-    # Iniciar Hilos Consumidores de Kafka
-    req_thread = threading.Thread(
-        target=kafka_requests_consumer, args=(kafka_broker,), daemon=True
-    )
-    req_thread.start()
-
-    tel_thread = threading.Thread(
-        target=kafka_telemetry_consumer, args=(kafka_broker,), daemon=True
-    )
-    tel_thread.start()
-
-
-    # 3. Crear y configurar el socket del servidor
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        server_socket.bind(('0.0.0.0', listen_port))
-        server_socket.listen(5)
-        print(f"\n*** EV_Central iniciada (Concurrente + Kafka) ***")
-        print(f"Escuchando Sockets en el puerto {listen_port}...")
-        print("El panel de control se está mostrando. Esperando conexiones...")
-
-        # 4. Bucle principal para aceptar conexiones de Sockets (Monitores)
-        while True:
-            conn, addr = server_socket.accept()
-            client_thread = threading.Thread(
-                target=handle_client, 
-                args=(conn, addr)
-            )
-            client_thread.start()
-
-    except socket.error as e:
-        print(f"Error de Socket: {e}")
+        asyncio.run(main_async(listen_port, kafka_broker))
     except KeyboardInterrupt:
-        print("\nCerrando servidor... ¡Adiós!")
-    finally:
-        kafka_producer.flush() # Vaciar buffer del productor
-        server_socket.close()
+        print("\n[MAIN] Interrupción por teclado.")
 
 if __name__ == "__main__":
     main()

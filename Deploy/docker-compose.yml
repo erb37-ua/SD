@@ -20,9 +20,9 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_CREATE_TOPICS: "requests:1:1,telemetry:1:1,commands:1:1" #añadido
+      KAFKA_CREATE_TOPICS: "requests:1:1,telemetry:1:1,commands:1:1"
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false' # añadido
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
@@ -32,33 +32,26 @@ services:
 
   central:
     build:
-      # CAMBIO: El contexto es la raíz del proyecto
       context: .. 
-      # CAMBIO: La ruta al Dockerfile es relativa al nuevo contexto
       dockerfile: Deploy/Dockerfile.central 
     hostname: central
     container_name: central
-    #depends_on: { broker: { condition: service_healthy } }
     depends_on:
-      # CAMBIO: Espera a que init-kafka termine
       init-kafka: { condition: service_completed_successfully }
     volumes:
-      # CAMBIO: La ruta al volumen es relativa a este yml
       - ../Central:/app 
     ports: ["5000:5000"]
-    command: ["python", "EV_Central.py", "5000", "broker:29092"]
+    #command: ["python", "EV_Central.py", "5000", "broker:29092"]
+    command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   ev_cp_e:
     build:
-      # CAMBIO:
       context: ..
       dockerfile: Deploy/Dockerfile.cps
     image: ev_cp_e:latest
     hostname: ev_cp_e_001
     container_name: ev_cp_e_001
-    #depends_on: { broker: { condition: service_healthy } }
     depends_on:
-      # CAMBIO: Espera a que init-kafka termine
       init-kafka: { condition: service_completed_successfully }
 
     environment:
@@ -66,22 +59,17 @@ services:
       - CP_ID=CP001
       - ENGINE_PORT=4001
     volumes:
-      # CAMBIO:
       - ../ChargingPoints:/app 
     ports: ["4001:4001"]
-    command: ["python", "EV_CP_E.py", "4001", "broker:29092", "CP001"]
+    #command: ["python", "EV_CP_E.py", "4001", "broker:29092", "CP001"]
+    command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   ev_cp_m:
     image: ev_cp_e:latest
     pull_policy: never
     hostname: ev_cp_m_001
     container_name: ev_cp_m_001
-    #depends_on:
-      #broker: { condition: service_healthy }
-      #central: { condition: service_started }
-      #ev_cp_e: { condition: service_started }
     depends_on:
-      # CAMBIO: Espera a que init-kafka termine
       init-kafka: { condition: service_completed_successfully }
       central: { condition: service_started }
       ev_cp_e: { condition: service_started }
@@ -92,29 +80,26 @@ services:
       - ENGINE_HOST=ev_cp_e_001
       - ENGINE_PORT=4001
     volumes:
-      # CAMBIO:
       - ../ChargingPoints:/app
-    command: ["python", "EV_CP_M.py", "central", "5000", "CP001", "ev_cp_e_001", "4001"]
+    #command: ["python", "EV_CP_M.py", "central", "5000", "CP001", "ev_cp_e_001", "4001"]
+    command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   driver:
     build:
-      # CAMBIO:
       context: ..
       dockerfile: Deploy/Dockerfile.drivers
     hostname: driver_1
     container_name: driver_1
-    #depends_on: { broker: { condition: service_healthy } }
     depends_on:
-      # CAMBIO: Espera a que init-kafka termine
       init-kafka: { condition: service_completed_successfully }
     environment:
       - KAFKA_BOOTSTRAP=broker:9092
     volumes:
-      # CAMBIO:
       - ../Drivers:/app
-    command: ["python", "EV_Driver.py", "broker:29092", "D001", "request.txt"]
+    #command: ["python", "EV_Driver.py", "broker:29092", "D001", "request.txt"]
+    command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
   
-  # --- SERVICIO NUEVO: Se ejecuta una vez para crear los topics ---
+  
   init-kafka:
     image: apache/kafka:latest
     container_name: init-kafka

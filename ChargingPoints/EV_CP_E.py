@@ -7,25 +7,23 @@ import random
 from confluent_kafka import Producer, Consumer, KafkaError
 import uuid
 
-# --- Estado compartido ---
+# Estado compartido 
 is_faulty = False
 fault_lock = threading.Lock()
 
-# --- Estado de recarga ---
-# Ya no necesitamos is_authorized, se gestiona con is_charging
+# Estado de recarga
 is_charging = False
 charge_lock = threading.Lock()
 
-# --- Kafka Producer Global ---
+# Kafka Producer Global
 kafka_producer = None
 cp_id_global = None # ID de este CP
 
-# --- Hilo de Input (Modificado) ---
+# Hilo de Input
 def input_thread():
     """
     Un hilo dedicado a escuchar la entrada del teclado para simular
     una avería o una recuperación.
-    YA NO ESCUCHA 'e'
     """
     global is_faulty
     print("Pulsa 'a' para simular una AVERÍA.")
@@ -46,7 +44,7 @@ def input_thread():
         except EOFError:
             break
 
-# --- Hilo de Simulación de Recarga ---
+# Hilo de Simulación de Recarga
 def charging_simulation_thread(driver_id):
     """
     Simula una recarga de 10 segundos, enviando telemetría
@@ -59,7 +57,7 @@ def charging_simulation_thread(driver_id):
     
     consumo_total_kw = 0.0
     importe_total_eur = 0.0
-    precio_kwh = 0.50 # Simplificación
+    precio_kwh = 0.50
     
     print(f"[Simulación] Iniciando recarga para {driver_id}...")
 
@@ -104,13 +102,15 @@ def charging_simulation_thread(driver_id):
     with charge_lock:
         is_charging = False
 
-# --- Hilo Consumidor de Kafka (Modificado) ---
+# Hilo consumidor de Kafka
 def kafka_commands_consumer(broker, cp_id):
-    """ Hilo consumidor para 'commands' (versión robusta) """
+    """
+    Hilo consumidor para 'commands'
+    """
     global is_charging
     print(f"[Kafka] Hilo consumidor de 'commands' para {cp_id} iniciado.")
 
-    while True: # Bucle exterior
+    while True:
         consumer = None
         try:
             consumer_config = {
@@ -122,7 +122,7 @@ def kafka_commands_consumer(broker, cp_id):
             consumer.subscribe(['commands'])
             print(f"[Kafka] Consumidor de 'commands' ({cp_id}) suscrito.")
 
-            while True: # Bucle interior
+            while True:
                 msg = consumer.poll(1.0)
                 if msg is None: continue
                 
@@ -130,12 +130,12 @@ def kafka_commands_consumer(broker, cp_id):
                     err_code = msg.error().code()
                     if err_code == KafkaError.UNKNOWN_TOPIC_OR_PART:
                         print(f"[{cp_id}] Topic 'commands' no encontrado, re-intentando subscripción...")
-                        break # Rompe el bucle INTERIOR
+                        break
                     else:
                         print(f"[Error Kafka Commands] {msg.error()}")
                         continue
                 
-                # --- Mensaje válido ---
+                # Mensaje válido
                 try:
                     command = json.loads(msg.value().decode('utf-8'))
                     
@@ -162,7 +162,7 @@ def kafka_commands_consumer(broker, cp_id):
             print(f"[Kafka] Consumidor 'commands' ({cp_id}) cerrado, re-intentando en 3s...")
             time.sleep(3)
 
-# --- Función de ayuda Kafka ---
+
 def send_kafka_message(topic, message_data):
     global kafka_producer
     try:
@@ -172,7 +172,7 @@ def send_kafka_message(topic, message_data):
     except Exception as e:
         print(f"[Error Kafka Produce] No se pudo enviar a {topic}: {e}")
 
-# --- main() (Sin cambios) ---
+
 def main():
     global is_faulty, kafka_producer, cp_id_global
 

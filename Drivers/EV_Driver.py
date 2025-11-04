@@ -20,16 +20,14 @@ def main():
     driver_id = sys.argv[2]
     requests_file = sys.argv[3]
 
-    # --- INICIO DE LA SOLUCIÓN ---
     print(f"[{driver_id}] Iniciando... Dando 5s para que los CPs se registren...")
     time.sleep(5)
-    # --- FIN DE LA SOLUCIÓN ---
 
-    # --- Configuración del Productor ---
+    # Configuración del Productor
     producer_config = {'bootstrap.servers': broker}
     producer = Producer(producer_config)
     
-    # --- Configuración del Consumidor (para tickets) ---
+    # Configuración del Consumidor (para tickets)
     consumer_config = {
         'bootstrap.servers': broker,
         'group.id': f'driver_group_{driver_id}_{uuid.uuid4()}', # Group ID único
@@ -71,7 +69,6 @@ def main():
                     consumer_config = {
                         'bootstrap.servers': broker,
                         'group.id': f'driver_group_{driver_id}_{uuid.uuid4()}',
-                        # --- CAMBIO 1: 'earliest' para no perder mensajes ---
                         'auto.offset.reset': 'earliest' 
                     }
                     consumer = Consumer(consumer_config)
@@ -94,7 +91,7 @@ def main():
                         try:
                             ticket = json.loads(msg.value().decode('utf-8'))
                             
-                            # --- CAMBIO 2: Comprobar que el ticket es para esta petición ---
+                            # CAMBIO 2: Comprobar que el ticket es para esta petición
                             if ticket.get('driverId') == driver_id and ticket.get('cpId') == cp_id:
                                 print(f"--- TICKET RECIBIDO (para {cp_id}) ---")
                                 print(f"  Estado: {ticket.get('status')}")
@@ -105,9 +102,9 @@ def main():
                                     print(f"  Razón: {ticket.get('reason')}")
                                 print("-------------------------")
                                 
-                                charge_completed = True # Esta petición está hecha
+                                charge_completed = True
                             
-                            # Ignorar tickets de otras peticiones (fantasmas)
+                            # Ignorar tickets de otras peticiones
                             elif ticket.get('driverId') == driver_id:
                                 print(f"[{driver_id}] Ignorando ticket antiguo para {ticket.get('cpId')}...")
 
