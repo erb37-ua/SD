@@ -12,7 +12,7 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:9093
       CLUSTER_ID: "gTBb85_WRXu6oQgq-brTQw"
       KAFKA_LISTENERS: EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://broker:29092
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://192.168.24.1:9092,INTERNAL://broker:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -105,17 +105,12 @@ services:
     container_name: init-kafka
     depends_on:
       broker: { condition: service_healthy }
-    entrypoint: /bin/sh
     command: >
-      -c "
-      echo '--- Esperando a que Kafka (broker) esté listo... ---';
-      sleep 5;
-      
-      echo '--- Creando topics (uno por uno, de forma robusta)... ---';
-      /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic requests --bootstrap-server broker:29092 --partitions 1 --replication-factor 1;
-      /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic commands --bootstrap-server broker:29092 --partitions 1 --replication-factor 1;
-      /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic telemetry --bootstrap-server broker:29092 --partitions 1 --replication-factor 1;
-      /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic tickets --bootstrap-server broker:29092 --partitions 1 --replication-factor 1;
-      
-      echo '--- Topics listos. ---';
+      bash -lc "
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic request --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic telemetry --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic commands --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic tickets --partitions 3 --replication-factor 1;
+        echo 'Kafka topics ready';
       "
+    restart: "no"

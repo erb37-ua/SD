@@ -178,7 +178,7 @@ def main():
 
     if len(sys.argv) < 4:
         print("Error: Faltan argumentos.")
-        print("Uso: python EV_CP_E.py <puerto_socket> <kafka_broker> <cp_id>")
+        print("Uso: python EV_CP_E.py <puerto_socket> <kafka_broker_host:port> <cp_id>")
         return
 
     try:

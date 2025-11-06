@@ -396,7 +396,7 @@ async def main_async(listen_port: int, kafka_broker: str):
     # 5. Iniciar servidor TCP asíncrono
     server = await asyncio.start_server(handle_client, '0.0.0.0', listen_port, reuse_address=True, backlog=16)
     addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
-    print(f"\n*** EV_Central iniciada (asyncio + Kafka) ***")
+    print(f"\n*** EV_Central iniciada ***")
     print(f"Escuchando Sockets en: {addrs}")
     print("El panel de control se está mostrando. Esperando conexiones...")
 
@@ -446,7 +446,7 @@ async def main_async(listen_port: int, kafka_broker: str):
 def main():
     if len(sys.argv) < 3:
         print("Error: Debes especificar un puerto y el broker de Kafka.")
-        print("Uso: python EV_Central_async.py <puerto_socket> <kafka_broker_host:port>")
+        print("Uso: python EV_Central.py <puerto_socket> <kafka_broker_host:port>")
         return
 
     try:
