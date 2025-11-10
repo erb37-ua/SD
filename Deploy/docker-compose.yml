@@ -40,8 +40,8 @@ services:
       init-kafka: { condition: service_completed_successfully }
     volumes:
       - ../Central:/app 
-    ports: ["5000:5000"]
-    #command: ["python", "EV_Central.py", "5000", "broker:29092"]
+    ports: ["5050:5050"]
+    #command: ["python", "EV_Central.py", "5050", "broker:29092"]
     command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   ev_cp_e:
@@ -60,8 +60,8 @@ services:
       - ENGINE_PORT=4001
     volumes:
       - ../ChargingPoints:/app 
-    ports: ["4001:4001"]
-    #command: ["python", "EV_CP_E.py", "4001", "broker:29092", "CP001"]
+    ports: ["7000:7000"]
+    #command: ["python", "EV_CP_E.py", "7000", "broker:29092", "CP001"]
     command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   ev_cp_m:
@@ -107,7 +107,7 @@ services:
       broker: { condition: service_healthy }
     command: >
       bash -lc "
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic request --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic requests --partitions 3 --replication-factor 1;
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic telemetry --partitions 3 --replication-factor 1;
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic commands --partitions 3 --replication-factor 1;
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server broker:29092 --create --if-not-exists --topic tickets --partitions 3 --replication-factor 1;

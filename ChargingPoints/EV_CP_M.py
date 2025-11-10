@@ -42,8 +42,7 @@ def main():
         print(f"[{cp_id}] ¡Conectado a CENTRAL!")
 
         # 4. Enviar mensaje de registro
-        location = "C/Ficticia 123"
-        message = f"REGISTER#{cp_id}#{location}"
+        message = f"REGISTER#{cp_id}\n" # ¡Sin ubicación!
         print(f"[{cp_id}] Enviando registro: {message}")
         central_socket.sendall(message.encode('utf-8'))
 
@@ -80,9 +79,11 @@ def main():
             try:
                 if health_status != last_reported_status:
                     if health_status == "KO":
-                        central_socket.sendall(f"FAULT#{cp_id}".encode('utf-8'))
+                        message = f"FAULT#{cp_id}\n"  # <--- AÑADE \n
                     else:
-                        central_socket.sendall(f"HEALTHY#{cp_id}".encode('utf-8'))
+                        message = f"HEALTHY#{cp_id}\n" # <--- AÑADE \n
+                    
+                    central_socket.sendall(message.encode('utf-8'))
                     
                     central_socket.recv(1024) # Esperar ACK
                     last_reported_status = health_status

@@ -139,23 +139,20 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             parts = message.split('#')
             response = "ACK"
 
-            if parts[0] == "REGISTER" and len(parts) >= 3:
+            if parts[0] == "REGISTER" and len(parts) >= 2:
                 cp_id = parts[1]
-                location = parts[2]
+                # location = parts[2] # <-- ¡Línea borrada!
                 cp_id_conectado = cp_id
                 
                 with db_lock:
                     if cp_id in charging_points:
                         charging_points[cp_id]['state'] = "Activado"
-                        print(f"[Registro] CP '{cp_id}' se ha activado.")
+                        print(f"[Registro] CP '{cp_id}' (desde BD) se ha activado.")
+                        response = "ACK: Registrado y Activado"
                     else:
-                        charging_points[cp_id] = {
-                            "location": location, "price": 0.50, "state": "Activado",
-                            "driver": None, "consumo": 0.0, "importe": 0.0
-                        }
-                        print(f"[Registro] Nuevo CP '{cp_id}' registrado y activado.")
-                
-                response = "ACK: Registrado y Activado"
+                        # Si no está en la BD, lo rechazamos.
+                        print(f"[Registro] RECHAZADO: CP '{cp_id}' no se encontró en la base de datos.")
+                        response = "NACK: CP DESCONOCIDO"
 
             elif parts[0] == "FAULT" and len(parts) >= 2:
                 cp_id = parts[1]
