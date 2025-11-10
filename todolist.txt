@@ -1,0 +1,4 @@
+- quitar el request.txt de los parámetros del driver
+- menú de opciones para la conexión driver-cp y requests de cargas
+- coger ip automática docker compose (script)
+- añadir más CPs en la base de datos
