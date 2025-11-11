@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>EV Central · Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, Arial;
+      --bg:#f5f7fa; --fg:#1f2937; --muted:#6b7280; --border:#e5e7eb; --card:#fff;
+      --shadow:0 1px 3px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.04);
+      --ok-bg:#d1fae5; --ok-fg:#065f46; --wr-bg:#fef3c7; --wr-fg:#92400e;
+      --bad-bg:#fee2e2; --bad-fg:#991b1b; --idle-bg:#f3f4f6; --idle-fg:#6b7280;
+      --btn-stop:#ef4444; --btn-resume:#10b981;
+    }
+    body{background:var(--bg);color:var(--fg);margin:1;padding:24px}
+    h1{margin:0 0 24px;font-size:26px;font-weight:600}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px}
+    .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+    .cp-header{display:flex;justify-content:space-between;align-items:center;font-size:15px;font-weight:600}
+    .cp-meta{text-align:center;color:var(--muted);font-size:14px;padding:6px 0 10px;border-bottom:1px solid var(--border)}
+
+    /* Stats centradas en columnas uniformes */
+    .stats{display:flex;justify-content:space-around;gap:12px;text-align:center;margin-top:4px}
+    .stat{min-width:90px}
+    .stat .label{font-size:12px;color:var(--muted)}
+    .stat .value{font-size:14px;font-weight:600;margin-top:2px}
+
+    .pill{padding:3px 10px;border-radius:999px;font-size:12px;display:inline-block;font-weight:500}
+    .ok{background:var(--ok-bg);color:var(--ok-fg)} .warn{background:var(--wr-bg);color:var(--wr-fg)}
+    .bad{background:var(--bad-bg);color:var(--bad-fg)} .idle{background:var(--idle-bg);color:var(--idle-fg)}
+
+    .btn{border:0;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#fff}
+    .btn:disabled{opacity:.4;cursor:not-allowed}
+    .btn-stop{background:var(--btn-stop)} .btn-resume{background:var(--btn-resume)}
+    .cp-actions{display:flex;justify-content:center;gap:8px;margin-top:6px}
+
+    .sidebar{background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:16px 20px}
+    .sidebar-title{font-size:16px;font-weight:600;margin-bottom:12px}
+    .statusline{font-size:13px;color:var(--muted);margin-top:10px}
+    .log{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+         font-size:12px;max-height:460px;overflow:auto;white-space:pre-wrap;word-break:break-word;border-top:1px solid var(--border);padding-top:10px}
+  </style>
+</head>
+<body>
+  <h1>EV Central · Panel</h1>
+
+  <div class="layout">
+    <div>
+      <div id="cp-cards" class="cards"></div>
+      <div class="statusline">Telemetría en vivo por WebSocket – <span id="status">Conectando…</span></div>
+    </div>
+
+    <div class="sidebar">
+      <div class="sidebar-title">Actividad</div>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <script>
+    const cardsEl=document.getElementById('cp-cards');
+    const statusEl=document.getElementById('status');
+    const logEl=document.getElementById('log');
+
+    function pillFor(state){
+      const s=(state||'').toLowerCase();
+      if(s.includes('suministr')) return `<span class="pill ok">Suministrando</span>`;
+      if(s.includes('activ')) return `<span class="pill ok">Activado</span>`;
+      if(s.includes('parado')) return `<span class="pill warn">Parado</span>`;
+      if(s.includes('averi')) return `<span class="pill bad">Averiado</span>`;
+      if(s.includes('desconect')) return `<span class="pill idle">Desconectado</span>`;
+      return `<span class="pill idle">${state||'-'}</span>`;
+    }
+
+    function render(data){
+      const keys=Object.keys(data||{}).sort();
+      const cards=[];
+      for(const id of keys){
+        const cp=data[id]||{};
+        const driver=cp.driver||'—';
+        const consumo=cp.consumo!=null?`${Number(cp.consumo).toFixed(2)} kWh`:'—';
+        const importe=cp.importe!=null?`${Number(cp.importe).toFixed(2)} €`:'—';
+        const state=cp.state||'—';
+
+        cards.push(`
+          <div class="card">
+            <div class="cp-header">
+              <span>${id}</span>
+              ${pillFor(state)}
+            </div>
+
+            <div class="cp-meta">${cp.location||'—'}</div>
+
+            <div class="stats">
+              <div class="stat">
+                <div class="label">Driver</div>
+                <div class="value">${driver}</div>
+              </div>
+              <div class="stat">
+                <div class="label">Consumo</div>
+                <div class="value">${consumo}</div>
+              </div>
+              <div class="stat">
+                <div class="label">Importe</div>
+                <div class="value">${importe}</div>
+              </div>
+            </div>
+
+            <div class="cp-actions">
+              <button class="btn btn-stop" onclick="sendCmd('${id}','STOP')" ${state.toLowerCase().includes('parado')?'disabled':''}>Parar</button>
+              <button class="btn btn-resume" onclick="sendCmd('${id}','RESUME')" ${state.toLowerCase().includes('activ')?'':''
+              }>Reanudar</button>
+            </div>
+          </div>
+        `);
+      }
+      cardsEl.innerHTML=cards.join('');
+    }
+
+    function log(line){ logEl.textContent=`[${new Date().toLocaleTimeString()}] ${line}\n`+logEl.textContent; }
+
+    let ws;
+    function connect(){
+      const proto=location.protocol==='https:'?'wss':'ws';
+      ws=new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onopen=()=>statusEl.textContent='Conectado';
+      ws.onclose=()=>{statusEl.textContent='Desconectado. Reintentando…'; setTimeout(connect,1000);}
+      ws.onerror=()=>statusEl.textContent='Error de conexión';
+      ws.onmessage=(ev)=>{
+        const msg=JSON.parse(ev.data||'{}');
+        if(msg.type==='snapshot') render(msg.data);
+        if(msg.type==='ack'){ if(msg.ok) log('Comando aceptado.'); else log('Comando rechazado: '+(msg.error||'error')); }
+      };
+    }
+    function sendCmd(cpId,action){
+      try{ ws?.send(JSON.stringify({type:'command',cpId,action})); log(`→ ${action} enviado a ${cpId}`); }
+      catch(e){ log('No se pudo enviar comando: '+e.message); }
+    }
+    connect();
+  </script>
+</body>
+</html>

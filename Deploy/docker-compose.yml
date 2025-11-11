@@ -40,7 +40,9 @@ services:
       init-kafka: { condition: service_completed_successfully }
     volumes:
       - ../Central:/app 
-    ports: ["5050:5050"]
+    ports: 
+      - "5050:5050"
+      - "8000:8000"
     command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   ev_cp_e:

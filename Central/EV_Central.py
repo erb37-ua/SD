@@ -8,6 +8,9 @@ import threading
 import asyncio
 import time
 from confluent_kafka import Producer, Consumer, KafkaError
+import uvicorn
+from threading import Thread
+
 
 # Colores
 VERDE = '\033[92m'
@@ -29,6 +32,13 @@ kafka_producer = None
 stop_event_threads = threading.Event()   # para hilos
 stop_event_async = None                  # será asyncio.Event()
 
+def get_state_snapshot():
+    """
+    Devuelve una copia segura del estado de los CPs para el panel web.
+    """
+    with db_lock:
+        # copia superficial de dicts (suficiente para lectura)
+        return {cp_id: dict(data) for cp_id, data in charging_points.items()}
 
 # Funciones de BD / panel
 def load_database(filename="cp_database.txt"):
@@ -452,6 +462,35 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
 
     print("[Kafka] Hilo consumidor 'telemetry' detenido.")
 
+def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
+    """
+    Lanza el servidor FastAPI/Uvicorn en un hilo.
+    Comparte el estado y la función de comandos con el panel.
+    """
+    from panel_central import create_app  # import diferido para evitar ciclos
+
+    app = create_app(
+        state_getter=get_state_snapshot,
+        command_sender=lambda cp_id, action: process_admin_command(
+            cp_id, action, "Parado" if action == "STOP" else "Activado"
+        ),
+    )
+
+    # Montar estáticos (Central/web)
+    from fastapi.staticfiles import StaticFiles
+    web_dir = os.path.join(os.path.dirname(__file__), "web")
+    if os.path.isdir(web_dir):
+        app.mount("/static", StaticFiles(directory=web_dir), name="static")
+
+    config = uvicorn.Config(app=app, host=http_host, port=http_port, log_level="info")
+    server = uvicorn.Server(config)
+
+    def _run():
+        server.run()
+
+    t = Thread(target=_run, daemon=True)
+    t.start()
+    print(f"[WEB] Panel disponible en http://{http_host}:{http_port}")
 
 async def main_async(listen_port: int, kafka_broker: str):
     global kafka_producer, stop_event_async
@@ -471,6 +510,12 @@ async def main_async(listen_port: int, kafka_broker: str):
 
     # Lanzar panel
     panel_task = asyncio.create_task(display_panel())
+
+    # Lanzar panel web (hilo separado con uvicorn)
+    try:
+        start_web_panel(http_host="0.0.0.0", http_port=8000, kafka_broker=kafka_broker)
+    except Exception as e:
+        print(f"[WEB] Error al iniciar el panel web: {e}")
 
     # Lanzar consumidores Kafka en hilos
     req_thread = threading.Thread(target=kafka_requests_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
