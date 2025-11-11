@@ -15,6 +15,14 @@ fault_lock = threading.Lock()
 is_charging = False
 charge_lock = threading.Lock()
 
+# --- NUEVO: Estado de parada administrativa ---
+is_stopped_by_central = False
+admin_stop_lock = threading.Lock()
+
+# --- NUEVO: Evento para interrumpir una recarga en curso ---
+current_charge_stop_event = None
+current_charge_lock = threading.Lock()
+
 # Kafka Producer Global
 kafka_producer = None
 cp_id_global = None # ID de este CP
@@ -45,11 +53,11 @@ def input_thread():
             break
 
 # Hilo de Simulación de Recarga
-def charging_simulation_thread(driver_id):
+def charging_simulation_thread(driver_id, stop_evt: threading.Event):
     """
     Simula una recarga de 10 segundos, enviando telemetría
     """
-    global is_faulty, is_charging
+    global is_faulty, is_charging, is_stopped_by_central
     
     # Aseguramos que el estado de recarga esté activo
     with charge_lock:
@@ -61,12 +69,20 @@ def charging_simulation_thread(driver_id):
     
     print(f"[Simulación] Iniciando recarga para {driver_id}...")
 
+    charge_interrupted = False
+
     for i in range(10): # Simular 10 segundos
+        if stop_evt.is_set():
+            print("[Simulación] Recarga INTERRUMPIDA por comando STOP (Driver o Admin).")
+            charge_interrupted = True
+            break
+
         time.sleep(1) 
         
         with fault_lock:
             if is_faulty:
                 print("[Simulación] ¡AVERÍA durante la recarga! Interrumpiendo.")
+                charge_interrupted = True
                 break 
         
         # Simular consumo
@@ -86,28 +102,36 @@ def charging_simulation_thread(driver_id):
         send_kafka_message('telemetry', telemetry_data)
         print(f"[Simulación] Telemetría {i+1}/10 enviada.")
 
-    # Simulación finalizada
-    print(f"[Simulación] Recarga finalizada para {driver_id}.")
-    
-    completion_data = {
-        'cpId': cp_id_global,
-        'driverId': driver_id,
-        'status': 'COMPLETED',
-        'final_consumo_kw': round(consumo_total_kw, 3),
-        'final_importe_eur': round(importe_total_eur, 2)
-    }
-    send_kafka_message('telemetry', completion_data)
+    if not charge_interrupted:
+        # Simulación finalizada (normalmente)
+        print(f"[Simulación] Recarga finalizada para {driver_id}.")
+        completion_data = {
+            'cpId': cp_id_global,
+            'driverId': driver_id,
+            'status': 'COMPLETED',
+            'final_consumo_kw': round(consumo_total_kw, 3),
+            'final_importe_eur': round(importe_total_eur, 2)
+        }
+        send_kafka_message('telemetry', completion_data)
+    else:
+        # Si fue interrumpida, no se envía ticket.
+        print(f"[Simulación] Recarga para {driver_id} parada sin ticket.")
 
     # Resetear estado
     with charge_lock:
         is_charging = False
+    
+    # Limpiar el evento de parada global
+    with current_charge_lock:
+        global current_charge_stop_event
+        current_charge_stop_event = None
 
 # Hilo consumidor de Kafka
 def kafka_commands_consumer(broker, cp_id):
     """
     Hilo consumidor para 'commands'
     """
-    global is_charging
+    global is_charging, is_stopped_by_central, current_charge_stop_event
     print(f"[Kafka] Hilo consumidor de 'commands' para {cp_id} iniciado.")
 
     while True:
@@ -139,17 +163,67 @@ def kafka_commands_consumer(broker, cp_id):
                 try:
                     command = json.loads(msg.value().decode('utf-8'))
                     
-                    if command.get('cpId') == cp_id and command.get('action') == 'AUTHORIZE':
-                        driver_id = command.get('driverId')
+                    # Ignorar comandos para otros CPs
+                    if command.get('cpId') != cp_id:
+                        continue 
+
+                    # --- LÓGICA DE COMANDOS MODIFICADA ---
+                    action = command.get('action')
+                    driver_id = command.get('driverId') # Puede ser None
+
+                    if action == 'AUTHORIZE':
                         print(f"\n[Kafka Command] Recarga AUTORIZADA para {driver_id}.")
                         
+                        # Comprobar si está parado por Admin
+                        with admin_stop_lock:
+                            if is_stopped_by_central:
+                                print(f"[Simulación] RECHAZADO: CP está en PARADA (Admin).")
+                                # (Opcional: enviar ticket de rechazo a 'tickets')
+                                continue
+                        
+                        # Comprobar si ya está cargando
                         with charge_lock:
                             if not is_charging:
                                 print("[Simulación] 'Enchufado' automático en 1 segundo...")
                                 time.sleep(1)
-                                threading.Thread(target=charging_simulation_thread, args=(driver_id,)).start()
+                                
+                                # Crear y guardar el evento de parada para esta recarga
+                                stop_evt = threading.Event()
+                                with current_charge_lock:
+                                    current_charge_stop_event = stop_evt
+                                
+                                # Iniciar hilo de simulación
+                                threading.Thread(
+                                    target=charging_simulation_thread, 
+                                    args=(driver_id, stop_evt) # Pasar el evento
+                                ).start()
                             else:
                                 print(f"\n[Kafka Command] Autorización recibida, pero ya hay una carga en curso.")
+                    
+                    elif action == 'STOP':
+                        if driver_id:
+                            # Parada de un Driver
+                            print(f"\n[Kafka Command] Petición de PARADA (Driver: {driver_id}) recibida.")
+                        else:
+                            # Parada de la CENTRAL (Admin)
+                            print(f"\n[Kafka Command] Petición de PARADA (Admin) recibida.")
+                            with admin_stop_lock:
+                                is_stopped_by_central = True # Poner en estado Parado
+                        
+                        # Interrumpir la recarga actual (si hay una)
+                        with current_charge_lock:
+                            if current_charge_stop_event:
+                                print("[Simulación] Interrumpiendo recarga en curso...")
+                                current_charge_stop_event.set()
+                            else:
+                                print("[Simulación] Petición de PARADA recibida, pero no hay carga activa.")
+
+                    elif action == 'RESUME':
+                        # Reanudación de la CENTRAL (Admin)
+                        print(f"\n[Kafka Command] Petición de REANUDAR (Admin) recibida.")
+                        with admin_stop_lock:
+                            is_stopped_by_central = False # Quitar estado Parado
+                    # --- FIN DE LÓGICA DE COMANDOS ---
 
                 except json.JSONDecodeError:
                     print("[Error Kafka Commands] Mensaje con JSON inválido.")

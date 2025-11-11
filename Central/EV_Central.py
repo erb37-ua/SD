@@ -11,7 +11,7 @@ from confluent_kafka import Producer, Consumer, KafkaError
 
 # Colores
 VERDE = '\033[92m'
-NARANJA = '\033[93m'
+NARANJA = '\033[38;5;208m'
 ROJO = '\033[91m'
 GRIS = '\033[90m'
 RESET = '\033[0m'
@@ -108,6 +108,79 @@ async def display_panel():
         # esperar 2 segundos
         await asyncio.sleep(2)
 
+# NUEVO: Hilo para leer comandos de administrador (stop/resume)
+def admin_input_thread(stop_evt: threading.Event):
+    """
+    Un hilo separado que bloquea en input() para recibir comandos
+    del administrador (ej: 'stop CP001', 'resume CP001').
+    """
+    print("\n[Admin] Hilo de comandos iniciado.")
+    print(f"[Admin] Escriba {NARANJA}'stop <cp_id>'{RESET} o {VERDE}'resume <cp_id>'{RESET} y pulse Enter.")
+    
+    while not stop_evt.is_set():
+        try:
+            # Esta línea se bloqueará, esperando la entrada del usuario
+            command_line = input() 
+            
+            if stop_evt.is_set():
+                break
+                
+            parts = command_line.strip().lower().split()
+            if not parts:
+                continue
+                
+            cmd = parts[0]
+            if len(parts) < 2:
+                print(f"{ROJO}[Admin] Error: Se requiere un comando y un cp_id (ej: stop CP001){RESET}")
+                continue
+                
+            cp_id = parts[1].upper() # Estandarizar a mayúsculas
+            
+            if cmd == 'stop':
+                # Enviar comando de Parada
+                print(f"[Admin] Procesando comando STOP para {cp_id}...")
+                process_admin_command(cp_id, "STOP", "Parado")
+            elif cmd == 'resume':
+                # Enviar comando de Reanudación
+                print(f"[Admin] Procesando comando RESUME para {cp_id}...")
+                process_admin_command(cp_id, "RESUME", "Activado")
+            else:
+                print(f"{ROJO}[Admin] Comando '{cmd}' no reconocido. Use 'stop' o 'resume'.{RESET}")
+                
+        except EOFError:
+            break # Salir si se pulsa Ctrl+D
+        except Exception as e:
+            if not stop_evt.is_set():
+                print(f"{ROJO}[Admin] Error en hilo de input: {e}{RESET}")
+            
+    print("[Admin] Hilo de input detenido.")
+
+# NUEVO: Función de ayuda para procesar los comandos de admin
+def process_admin_command(cp_id: str, kafka_action: str, db_state: str):
+    """
+    Actualiza el estado del CP en la BD local y envía el comando
+    por Kafka al Engine correspondiente.
+    """
+    global kafka_producer
+    
+    with db_lock:
+        if cp_id not in charging_points:
+            print(f"{ROJO}[Admin] CP '{cp_id}' no encontrado en la base de datos.{RESET}")
+            return
+            
+        # 1. Actualizar el estado local inmediatamente
+        # El panel lo mostrará en el siguiente refresco
+        charging_points[cp_id]['state'] = db_state
+        print(f"[Admin] Estado local de '{cp_id}' actualizado a: {db_state}")
+
+    # 2. Enviar el comando por Kafka al CP (Engine)
+    command_message = {
+        'cpId': cp_id, 
+        'action': kafka_action # "STOP" o "RESUME"
+    }
+    send_kafka_message('commands', command_message)
+    print(f"[Admin] Comando '{kafka_action}' enviado a Kafka para {cp_id}.")
+
 
 # Comunicación sockets
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -195,12 +268,21 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         print(f"[Info] Conexión con {addr} perdida o cerrada.")
     except Exception as e:
         print(f"[Error] Excepción en handle_client: {e}")
+    # --- DESPUÉS (Corregido) ---
     finally:
         if cp_id_conectado:
             with db_lock:
-                if cp_id_conectado in charging_points and charging_points[cp_id_conectado]['state'] == "Activado":
-                    charging_points[cp_id_conectado]['state'] = "DESCONECTADO"
-                    print(f"[Estado] CP '{cp_id_conectado}' pasa a DESCONECTADO.")
+                if cp_id_conectado in charging_points:
+                    # Obtenemos el estado actual
+                    current_state = charging_points[cp_id_conectado]['state']
+
+                    # Solo cambiamos a DESCONECTADO si el estado NO es "Suministrando" o "Parado".
+                    # Si era "Activado" o "Averiado", debe pasar a "Desconectado".
+                    if current_state != "Suministrando" and current_state != "Parado":
+                        charging_points[cp_id_conectado]['state'] = "DESCONECTADO"
+                        print(f"[Estado] CP '{cp_id_conectado}' (estado anterior: {current_state}) pasa a DESCONECTADO.")
+                    else:
+                        print(f"[Estado] CP '{cp_id_conectado}' desconectado, pero se mantiene estado {current_state}.")
         try:
             writer.close()
             await writer.wait_closed()
@@ -387,8 +469,10 @@ async def main_async(listen_port: int, kafka_broker: str):
     # 4. Lanzar consumidores Kafka en hilos
     req_thread = threading.Thread(target=kafka_requests_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
     tel_thread = threading.Thread(target=kafka_telemetry_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
+    admin_thread = threading.Thread(target=admin_input_thread, args=(stop_event_threads,), daemon=True)
     req_thread.start()
     tel_thread.start()
+    admin_thread.start()
 
     # 5. Iniciar servidor TCP asíncrono
     server = await asyncio.start_server(handle_client, '0.0.0.0', listen_port, reuse_address=True, backlog=16)
