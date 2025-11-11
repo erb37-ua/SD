@@ -315,8 +315,8 @@ def kafka_requests_consumer(broker, stop_evt: threading.Event):
         try:
             consumer_config = {
                 'bootstrap.servers': broker,
-                'group.id': f'central_requests_group_{uuid.uuid4()}',
-                'auto.offset.reset': 'earliest'
+                'group.id': f'central_requests_group',
+                'auto.offset.reset': 'latest'
             }
             consumer = Consumer(consumer_config)
             consumer.subscribe(['requests'])
@@ -430,6 +430,15 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                         }
                         send_kafka_message('tickets', ticket_message)
                         
+                        charging_points[cp_id]['state'] = "Activado"
+                        charging_points[cp_id]['driver'] = None
+                        charging_points[cp_id]['consumo'] = 0.0
+                        charging_points[cp_id]['importe'] = 0.0
+                    
+                    elif status == 'STOPPED':
+                        print(f"[Kafka Telemetry] Recibida parada (STOPPED) de {cp_id}")
+                        # NO enviar ticket
+                        # Solo resetear el estado del CP
                         charging_points[cp_id]['state'] = "Activado"
                         charging_points[cp_id]['driver'] = None
                         charging_points[cp_id]['consumo'] = 0.0

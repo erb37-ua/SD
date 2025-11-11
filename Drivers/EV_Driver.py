@@ -26,7 +26,7 @@ def kafka_ticket_listener(broker: str, driver_id: str, cp_id: str):
     try:
         consumer_config = {
             'bootstrap.servers': broker,
-            'group.id': f'driver_group_{driver_id}_{uuid.uuid4()}',
+            'group.id': f'driver_group_{driver_id}',
             'auto.offset.reset': 'latest'
         }
         consumer = Consumer(consumer_config)

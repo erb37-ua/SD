@@ -114,8 +114,14 @@ def charging_simulation_thread(driver_id, stop_evt: threading.Event):
         }
         send_kafka_message('telemetry', completion_data)
     else:
-        # Si fue interrumpida, no se envía ticket.
+        # Si fue interrumpida, enviar un mensaje 'STOPPED'
         print(f"[Simulación] Recarga para {driver_id} parada sin ticket.")
+        stop_data = {
+            'cpId': cp_id_global,
+            'driverId': driver_id,
+            'status': 'STOPPED'  # <--- NUEVO ESTADO
+        }
+        send_kafka_message('telemetry', stop_data)
 
     # Resetear estado
     with charge_lock:
@@ -140,7 +146,7 @@ def kafka_commands_consumer(broker, cp_id):
             consumer_config = {
                 'bootstrap.servers': broker,
                 'group.id': f'cp_group_{cp_id}_{uuid.uuid4()}',
-                'auto.offset.reset': 'earliest'
+                'auto.offset.reset': 'latest'
             }
             consumer = Consumer(consumer_config)
             consumer.subscribe(['commands'])

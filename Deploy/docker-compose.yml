@@ -41,7 +41,6 @@ services:
     volumes:
       - ../Central:/app 
     ports: ["5050:5050"]
-    #command: ["python", "EV_Central.py", "5050", "broker:29092"]
     command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   ev_cp_e:
@@ -60,8 +59,8 @@ services:
       - ENGINE_PORT=4001
     volumes:
       - ../ChargingPoints:/app 
-    ports: ["7000:7000"]
-    #command: ["python", "EV_CP_E.py", "7000", "broker:29092", "CP001"]
+    ports: 
+      - "7000-7009:7000-7009"
     command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
 
   ev_cp_m:
@@ -81,8 +80,7 @@ services:
       - ENGINE_PORT=4001
     volumes:
       - ../ChargingPoints:/app
-    #command: ["python", "EV_CP_M.py", "central", "5000", "CP001", "ev_cp_e_001", "4001"]
-    command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
+    command: ["sleep", "infinity"]
 
   driver:
     build:
@@ -96,8 +94,7 @@ services:
       - KAFKA_BOOTSTRAP=broker:9092
     volumes:
       - ../Drivers:/app
-    #command: ["python", "EV_Driver.py", "broker:29092", "D001", "request.txt"]
-    command: ["sleep", "infinity"]  # Para mantener el contenedor en ejecución para pruebas
+    command: ["sleep", "infinity"]
   
   
   init-kafka:
