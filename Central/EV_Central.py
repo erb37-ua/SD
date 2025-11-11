@@ -177,6 +177,11 @@ def process_admin_command(cp_id: str, kafka_action: str, db_state: str):
         if cp_id not in charging_points:
             print(f"{ROJO}[Admin] CP '{cp_id}' no encontrado en la base de datos.{RESET}")
             return
+        
+        current_state = charging_points[cp_id].get("state", "DESCONECTADO")
+        if current_state == "DESCONECTADO":
+            print(f"[Admin] IGNORADO: '{cp_id}' está DESCONECTADO. No se envía comando.")
+            return {"ok": False, "error": f"CP '{cp_id}' no está conectado"}
             
         # Actualizar el estado local inmediatamente, el panel lo mostrará en el siguiente refresco
         charging_points[cp_id]['state'] = db_state

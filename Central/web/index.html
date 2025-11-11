@@ -109,9 +109,17 @@
             </div>
 
             <div class="cp-actions">
-              <button class="btn btn-stop" onclick="sendCmd('${id}','STOP')" ${state.toLowerCase().includes('parado')?'disabled':''}>Parar</button>
-              <button class="btn btn-resume" onclick="sendCmd('${id}','RESUME')" ${state.toLowerCase().includes('activ')?'':''
-              }>Reanudar</button>
+              <button class="btn btn-stop"
+                onclick="sendCmd('${id}','STOP')"
+                ${state.toLowerCase().includes('desconect') ? 'disabled' : ''}>
+                Parar
+              </button>
+
+              <button class="btn btn-resume"
+                onclick="sendCmd('${id}','RESUME')"
+                ${state.toLowerCase().includes('desconect') ? 'disabled' : ''}>
+                Reanudar
+              </button>
             </div>
           </div>
         `);
