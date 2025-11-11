@@ -3,20 +3,19 @@ import json
 import time
 from confluent_kafka import Producer, Consumer, KafkaError
 import uuid
-import threading # NUEVO: Importar hilos
+import threading
 
-# Evento global para coordinar los hilos
-# Se usará para avisar que la recarga ha terminado (por ticket o por parada)
+# Evento global para coordinar los hilos, se usará para avisar que la recarga ha terminado (por ticket/parada)
 charge_complete_event = threading.Event()
 
 def delivery_report(err, msg):
-    """ Callback de productor: se llama cuando un mensaje es entregado o falla. """
+    """ 
+    Callback de productor: se llama cuando un mensaje es entregado o falla. 
+    """
     if err is not None:
         print(f"Fallo al enviar mensaje: {err}")
-    # else:
-    #     print(f"Mensaje enviado a {msg.topic()} [{msg.partition()}]")
 
-# NUEVO: Hilo dedicado a escuchar tickets de Kafka
+
 def kafka_ticket_listener(broker: str, driver_id: str, cp_id: str):
     """
     Se ejecuta en un hilo separado.
@@ -56,7 +55,7 @@ def kafka_ticket_listener(broker: str, driver_id: str, cp_id: str):
                         print(f"  Razón: {ticket.get('reason')}")
                     print("-------------------------")
                     
-                    charge_complete_event.set() # ¡Avisa al hilo principal que hemos terminado!
+                    charge_complete_event.set() # Avisa al hilo principal que se ha termindado
 
             except json.JSONDecodeError:
                 print("[Error Hilo Kafka] Error al decodificar ticket JSON.")
@@ -80,7 +79,7 @@ def send_stop_command(producer: Producer, driver_id: str, cp_id: str):
         command_data = {
             'driverId': driver_id,
             'cpId': cp_id,
-            'action': 'STOP' # El Engine debe ser modificado para entender esto
+            'action': 'STOP' # El engine debe ser modificado para entender esto
         }
         payload = json.dumps(command_data).encode('utf-8')
         
@@ -99,14 +98,13 @@ def main():
     broker = sys.argv[1]
     driver_id = sys.argv[2]
 
-    # Configuración del Productor (es seguro para hilos, se puede compartir)
     producer_config = {'bootstrap.servers': broker}
     producer = Producer(producer_config)
     
-    # El consumidor se creará DENTRO del hilo de escucha
+    # El consumidor se creará dentro del hilo de escucha
 
     try:
-        # MODIFICADO: Bucle interactivo principal
+        # Bucle interactivo principal
         while True:
             print("\n--- MENÚ PRINCIPAL (Driver) ---")
             print("Introduzca el ID del CP para INICIAR CARGA (ej: CP001):")
@@ -122,13 +120,11 @@ def main():
                 continue
 
             current_cp_id = cp_id_input
-
-            # --- NUEVA LÓGICA DE SESIÓN DE RECARGA ---
             
-            # 1. Limpiar el evento por si se usó antes
+            # Limpiar el evento por si se usó antes
             charge_complete_event.clear()
 
-            # 2. Crear y arrancar el Hilo de Escucha Kafka
+            # Crear y arrancar el Hilo de Escucha Kafka
             listener_thread = threading.Thread(
                 target=kafka_ticket_listener,
                 args=(broker, driver_id, current_cp_id),
@@ -136,7 +132,7 @@ def main():
             )
             listener_thread.start()
 
-            # 3. Enviar la petición de recarga (en el hilo principal)
+            # Enviar la petición de recarga (en el hilo principal)
             try:
                 request_data = {
                     'driverId': driver_id,
@@ -151,13 +147,12 @@ def main():
                 charge_complete_event.set() # Avisa al hilo listener que pare
                 continue # Volver al menú
 
-            # 4. Hilo Principal: se queda esperando la entrada del usuario ('p')
+            # El hilo principal se queda esperando la entrada del usuario
             print(f"[{driver_id}] Recarga en curso... (Pulsa 'p' y Enter para PARAR)")
             
             while not charge_complete_event.is_set():
                 try:
-                    # Este input() bloquea el hilo principal, 
-                    # mientras el otro hilo escucha Kafka
+                    # Este input() bloquea el hilo principal, mientras el otro hilo escucha Kafka
                     user_input = input() 
                     if user_input.lower() == 'p':
                         print("... Petición de PARADA recibida.")
@@ -172,12 +167,11 @@ def main():
                     charge_complete_event.set() # Avisa al hilo listener que pare
                     raise # Propaga la interrupción para salir del programa
             
-            # 5. La recarga ha terminado (por ticket o por 'p')
+            # La recarga ha terminado (por ticket o por 'p')
             print(f"[{driver_id}] Sesión de recarga para {current_cp_id} finalizada.")
             listener_thread.join(timeout=2.0) # Espera a que el hilo listener termine
             print("Volviendo al menú principal...")
             time.sleep(1)
-            # --- FIN DE LA LÓGICA DE SESIÓN ---
 
     except KeyboardInterrupt:
         print(f"\n[{driver_id}] Proceso interrumpido.")

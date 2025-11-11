@@ -108,7 +108,7 @@ async def display_panel():
         # esperar 2 segundos
         await asyncio.sleep(2)
 
-# NUEVO: Hilo para leer comandos de administrador (stop/resume)
+# Hilo para leer comandos de administrador (stop/resume)
 def admin_input_thread(stop_evt: threading.Event):
     """
     Un hilo separado que bloquea en input() para recibir comandos
@@ -155,7 +155,7 @@ def admin_input_thread(stop_evt: threading.Event):
             
     print("[Admin] Hilo de input detenido.")
 
-# NUEVO: Función de ayuda para procesar los comandos de admin
+# Función de ayuda para procesar los comandos de admin
 def process_admin_command(cp_id: str, kafka_action: str, db_state: str):
     """
     Actualiza el estado del CP en la BD local y envía el comando
@@ -168,12 +168,11 @@ def process_admin_command(cp_id: str, kafka_action: str, db_state: str):
             print(f"{ROJO}[Admin] CP '{cp_id}' no encontrado en la base de datos.{RESET}")
             return
             
-        # 1. Actualizar el estado local inmediatamente
-        # El panel lo mostrará en el siguiente refresco
+        # Actualizar el estado local inmediatamente, el panel lo mostrará en el siguiente refresco
         charging_points[cp_id]['state'] = db_state
         print(f"[Admin] Estado local de '{cp_id}' actualizado a: {db_state}")
 
-    # 2. Enviar el comando por Kafka al CP (Engine)
+    # Enviar el comando por Kafka al CP (Engine)
     command_message = {
         'cpId': cp_id, 
         'action': kafka_action # "STOP" o "RESUME"
@@ -214,7 +213,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
             if parts[0] == "REGISTER" and len(parts) >= 2:
                 cp_id = parts[1]
-                # location = parts[2] # <-- ¡Línea borrada!
                 cp_id_conectado = cp_id
                 
                 with db_lock:
@@ -223,7 +221,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         print(f"[Registro] CP '{cp_id}' (desde BD) se ha activado.")
                         response = "ACK: Registrado y Activado"
                     else:
-                        # Si no está en la BD, lo rechazamos.
+                        # Si no está en la BD, lo rechazamos
                         print(f"[Registro] RECHAZADO: CP '{cp_id}' no se encontró en la base de datos.")
                         response = "NACK: CP DESCONOCIDO"
 
@@ -268,7 +266,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         print(f"[Info] Conexión con {addr} perdida o cerrada.")
     except Exception as e:
         print(f"[Error] Excepción en handle_client: {e}")
-    # --- DESPUÉS (Corregido) ---
+
     finally:
         if cp_id_conectado:
             with db_lock:
@@ -437,8 +435,7 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                     
                     elif status == 'STOPPED':
                         print(f"[Kafka Telemetry] Recibida parada (STOPPED) de {cp_id}")
-                        # NO enviar ticket
-                        # Solo resetear el estado del CP
+                        # NO enviar ticket, solo resetear el estado del CP
                         charging_points[cp_id]['state'] = "Activado"
                         charging_points[cp_id]['driver'] = None
                         charging_points[cp_id]['consumo'] = 0.0
@@ -461,10 +458,10 @@ async def main_async(listen_port: int, kafka_broker: str):
 
     stop_event_async = asyncio.Event()
 
-    # 1. Cargar DB
+    # Cargar DB
     load_database()
 
-    # 2. Inicializar Kafka producer
+    # Inicializar Kafka producer
     try:
         kafka_producer = Producer({'bootstrap.servers': kafka_broker})
         print(f"[Kafka] Productor conectado a {kafka_broker}")
@@ -472,10 +469,10 @@ async def main_async(listen_port: int, kafka_broker: str):
         print(f"[Error Kafka] No se pudo conectar el Productor: {e}")
         return
 
-    # 3. Lanzar panel
+    # Lanzar panel
     panel_task = asyncio.create_task(display_panel())
 
-    # 4. Lanzar consumidores Kafka en hilos
+    # Lanzar consumidores Kafka en hilos
     req_thread = threading.Thread(target=kafka_requests_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
     tel_thread = threading.Thread(target=kafka_telemetry_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
     admin_thread = threading.Thread(target=admin_input_thread, args=(stop_event_threads,), daemon=True)
@@ -483,7 +480,7 @@ async def main_async(listen_port: int, kafka_broker: str):
     tel_thread.start()
     admin_thread.start()
 
-    # 5. Iniciar servidor TCP asíncrono
+    # Iniciar servidor TCP asíncrono
     server = await asyncio.start_server(handle_client, '0.0.0.0', listen_port, reuse_address=True, backlog=16)
     addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
     print(f"\n*** EV_Central iniciada ***")

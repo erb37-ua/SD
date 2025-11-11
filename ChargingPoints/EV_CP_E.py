@@ -15,11 +15,11 @@ fault_lock = threading.Lock()
 is_charging = False
 charge_lock = threading.Lock()
 
-# --- NUEVO: Estado de parada administrativa ---
+# Estado de parada administrativa
 is_stopped_by_central = False
 admin_stop_lock = threading.Lock()
 
-# --- NUEVO: Evento para interrumpir una recarga en curso ---
+# Evento para interrumpir una recarga en curso
 current_charge_stop_event = None
 current_charge_lock = threading.Lock()
 
@@ -119,7 +119,7 @@ def charging_simulation_thread(driver_id, stop_evt: threading.Event):
         stop_data = {
             'cpId': cp_id_global,
             'driverId': driver_id,
-            'status': 'STOPPED'  # <--- NUEVO ESTADO
+            'status': 'STOPPED'
         }
         send_kafka_message('telemetry', stop_data)
 
@@ -173,18 +173,16 @@ def kafka_commands_consumer(broker, cp_id):
                     if command.get('cpId') != cp_id:
                         continue 
 
-                    # --- LÓGICA DE COMANDOS MODIFICADA ---
                     action = command.get('action')
                     driver_id = command.get('driverId') # Puede ser None
 
                     if action == 'AUTHORIZE':
                         print(f"\n[Kafka Command] Recarga AUTORIZADA para {driver_id}.")
                         
-                        # Comprobar si está parado por Admin
+                        # Comprobar si está parado por la central
                         with admin_stop_lock:
                             if is_stopped_by_central:
-                                print(f"[Simulación] RECHAZADO: CP está en PARADA (Admin).")
-                                # (Opcional: enviar ticket de rechazo a 'tickets')
+                                print(f"[Simulación] RECHAZADO: CP está en PARADA.")
                                 continue
                         
                         # Comprobar si ya está cargando
@@ -211,8 +209,8 @@ def kafka_commands_consumer(broker, cp_id):
                             # Parada de un Driver
                             print(f"\n[Kafka Command] Petición de PARADA (Driver: {driver_id}) recibida.")
                         else:
-                            # Parada de la CENTRAL (Admin)
-                            print(f"\n[Kafka Command] Petición de PARADA (Admin) recibida.")
+                            # Parada de la CENTRAL
+                            print(f"\n[Kafka Command] Petición de PARADA recibida.")
                             with admin_stop_lock:
                                 is_stopped_by_central = True # Poner en estado Parado
                         
@@ -225,11 +223,10 @@ def kafka_commands_consumer(broker, cp_id):
                                 print("[Simulación] Petición de PARADA recibida, pero no hay carga activa.")
 
                     elif action == 'RESUME':
-                        # Reanudación de la CENTRAL (Admin)
-                        print(f"\n[Kafka Command] Petición de REANUDAR (Admin) recibida.")
+                        # Reanudación de la CENTRAL
+                        print(f"\n[Kafka Command] Petición de REANUDAR recibida.")
                         with admin_stop_lock:
                             is_stopped_by_central = False # Quitar estado Parado
-                    # --- FIN DE LÓGICA DE COMANDOS ---
 
                 except json.JSONDecodeError:
                     print("[Error Kafka Commands] Mensaje con JSON inválido.")

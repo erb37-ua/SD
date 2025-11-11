@@ -17,7 +17,7 @@ def connect_to_engine(engine_ip, engine_port):
         return None
 
 def main():
-    # 1. Validar argumentos de línea de comandos
+    # Validar argumentos de línea de comandos
     if len(sys.argv) < 6:
         print("Error: Faltan argumentos.")
         print("Uso: python EV_CP_M.py <IP_Central> <Puerto_Central> <ID_CP> <IP_Engine> <Puerto_Engine>")
@@ -41,12 +41,12 @@ def main():
         central_socket.connect((central_ip, central_port))
         print(f"[{cp_id}] ¡Conectado a CENTRAL!")
 
-        # 4. Enviar mensaje de registro
+        # Enviar mensaje de registro
         message = f"REGISTER#{cp_id}\n" # ¡Sin ubicación!
         print(f"[{cp_id}] Enviando registro: {message}")
         central_socket.sendall(message.encode('utf-8'))
 
-        # 5. Esperar respuesta (ACK) del servidor
+        # Esperar respuesta (ACK) del servidor
         response_data = central_socket.recv(1024)
         print(f"[{cp_id}] Respuesta de CENTRAL: {response_data.decode('utf-8')}")
 
@@ -75,13 +75,13 @@ def main():
                 engine_socket = connect_to_engine(engine_ip, engine_port)
                 health_status = "KO"
 
-            # 3. Reportar estado a la CENTRAL (solo si cambia)
+            # Reportar estado a la CENTRAL (solo si cambia)
             try:
                 if health_status != last_reported_status:
                     if health_status == "KO":
-                        message = f"FAULT#{cp_id}\n"  # <--- AÑADE \n
+                        message = f"FAULT#{cp_id}\n"
                     else:
-                        message = f"HEALTHY#{cp_id}\n" # <--- AÑADE \n
+                        message = f"HEALTHY#{cp_id}\n"
                     
                     central_socket.sendall(message.encode('utf-8'))
                     
@@ -99,7 +99,7 @@ def main():
     except KeyboardInterrupt:
         print(f"\n[{cp_id}] Desconectando...")
     finally:
-        # 6. Cerrar ambos sockets
+        # Cerrar ambos sockets
         print(f"[{cp_id}] Cerrando conexiones.")
         if 'central_socket' in locals():
             central_socket.close()
