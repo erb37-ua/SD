@@ -1,18 +1,23 @@
 # Registry/EV_Registry.py
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import jwt
 import secrets
 import sys
 import os
+import time
 
 # Definimos el modelo de datos que esperamos recibir del CP
 class CPRegisterRequest(BaseModel):
     cp_id: str
     location: str
 
+JWT_SECRET = os.getenv("REGISTRY_JWT_SECRET", "dev_registry_secret")
+JWT_ALG = "HS256"
+
 # Almacén en memoria de los CPs registrados
-# Formato: { "CP001": "token_secreto_generado" }
+# Formato: { "CP001": {"location": "...", "token": "..."} }
 registered_cps = {}
 
 app = FastAPI(title="EV Registry Service")
@@ -26,8 +31,17 @@ def register_cp(request: CPRegisterRequest):
     """
     cp_id = request.cp_id
     
-    # Generamos un token seguro (hexadecimal)
-    token = secrets.token_hex(16)
+    issued_at = int(time.time())
+    token_payload = {
+        "cp_id": cp_id,
+        "location": request.location,
+        "iat": issued_at,
+        "exp": issued_at + 24 * 3600,
+        "nonce": secrets.token_hex(8),
+    }
+    token = jwt.encode(token_payload, JWT_SECRET, algorithm=JWT_ALG)
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
     
     # Guardamos el CP y su token "en la base de datos" (memoria)
     registered_cps[cp_id] = {

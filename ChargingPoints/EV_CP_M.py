@@ -1,6 +1,8 @@
 import socket
 import sys
 import time
+import os
+import requests
 
 def connect_to_engine(engine_ip, engine_port):
     """
@@ -16,23 +18,89 @@ def connect_to_engine(engine_ip, engine_port):
         # No imprimimos error aquí, la lógica principal ya lo hace
         return None
 
+def send_key_to_engine(engine_socket, aes_key):
+    if not engine_socket:
+        return False
+    try:
+        engine_socket.sendall(f"SET_KEY#{aes_key}\n".encode("utf-8"))
+        engine_socket.settimeout(3)
+        response = engine_socket.recv(1024).decode("utf-8").strip()
+        engine_socket.settimeout(None)
+        return response == "KEY_OK"
+    except socket.error:
+        return False
+
+def write_token_log(cp_id, token):
+    log_path = os.getenv("TOKEN_LOG_PATH")
+    if not log_path:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        log_path = os.path.join(base_dir, "registry_tokens.log")
+    try:
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} | cp_id={cp_id} | token={token}\n")
+        return log_path
+    except OSError as exc:
+        print(f"[{cp_id}] No se pudo escribir el token en {log_path}: {exc}")
+        return None
+
+def get_registry_token(registry_url, cp_id, location, verify_ssl):
+    url = registry_url.rstrip("/") + "/register"
+    try:
+        resp = requests.post(
+            url,
+            json={"cp_id": cp_id, "location": location},
+            timeout=5,
+            verify=verify_ssl,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data.get("token")
+        if not token:
+            print(f"[{cp_id}] Registro sin token válido.")
+            return None
+        return token
+    except Exception as e:
+        print(f"[{cp_id}] Error registrando en EV_Registry: {e}")
+        return None
+
 def main():
     # Validar argumentos de línea de comandos
-    if len(sys.argv) < 6:
-        print("Error: Faltan argumentos.")
-        print("Uso: python EV_CP_M.py <IP_Central> <Puerto_Central> <ID_CP> <IP_Engine> <Puerto_Engine>")
-        return
+    if len(sys.argv) >= 6:
+        central_ip = sys.argv[1]
+        cp_id = sys.argv[3]
+        engine_ip = sys.argv[4]
+        try:
+            central_port = int(sys.argv[2])
+            engine_port = int(sys.argv[5])
+        except ValueError:
+            print("Error: Los puertos deben ser números enteros.")
+            return
+    else:
+        central_ip = os.getenv("CENTRAL_HOST")
+        cp_id = os.getenv("CP_ID")
+        engine_ip = os.getenv("ENGINE_HOST")
+        central_port = os.getenv("CENTRAL_PORT")
+        engine_port = os.getenv("ENGINE_PORT")
+        if not all([central_ip, cp_id, engine_ip, central_port, engine_port]):
+            print("Error: Faltan argumentos o variables de entorno.")
+            print("Uso: python EV_CP_M.py <IP_Central> <Puerto_Central> <ID_CP> <IP_Engine> <Puerto_Engine>")
+            return
+        central_port = int(central_port)
+        engine_port = int(engine_port)
 
-    central_ip = sys.argv[1]
-    cp_id = sys.argv[3]
-    engine_ip = sys.argv[4]
+    registry_url = os.getenv("REGISTRY_URL", "https://registry:8080")
+    cp_location = os.getenv("CP_LOCATION", "unknown")
+    verify_ssl = os.getenv("REGISTRY_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
+    cert_path = os.getenv("REGISTRY_CERT_PATH")
+    verify_setting = cert_path if cert_path else verify_ssl
 
-    try:
-        central_port = int(sys.argv[2])
-        engine_port = int(sys.argv[5])
-    except ValueError:
-        print("Error: Los puertos deben ser números enteros.")
+    token = get_registry_token(registry_url, cp_id, cp_location, verify_setting)
+    if not token:
         return
+    token_log_path = write_token_log(cp_id, token)
+    if token_log_path:
+        print(f"[{cp_id}] Token guardado en {token_log_path}")
 
     # Socket 1: Conexión con EV_Central
     try:
@@ -42,16 +110,24 @@ def main():
         print(f"[{cp_id}] ¡Conectado a CENTRAL!")
 
         # Enviar mensaje de registro
-        message = f"REGISTER#{cp_id}\n" # ¡Sin ubicación!
-        print(f"[{cp_id}] Enviando registro: {message}")
+        message = f"REGISTER#{cp_id}#{token}\n"
+        print(f"[{cp_id}] Enviando registro a CENTRAL (token oculto).")
         central_socket.sendall(message.encode('utf-8'))
 
         # Esperar respuesta (ACK) del servidor
-        response_data = central_socket.recv(1024)
-        print(f"[{cp_id}] Respuesta de CENTRAL: {response_data.decode('utf-8')}")
+        response_data = central_socket.recv(1024).decode("utf-8").strip()
+        print(f"[{cp_id}] Respuesta de CENTRAL: {response_data}")
+        if response_data.startswith("ACK#KEY#"):
+            aes_key = response_data.split("#", 2)[2]
+        else:
+            print(f"[{cp_id}] Registro rechazado o sin clave AES.")
+            return
 
         # Socket 2: Conexión con EV_CP_E (Engine)
         engine_socket = connect_to_engine(engine_ip, engine_port)
+        if engine_socket:
+            if not send_key_to_engine(engine_socket, aes_key):
+                print(f"[{cp_id}] No se pudo enviar la clave AES al Engine.")
         
         last_reported_status = "" # Para evitar enviar mensajes redundantes
         
@@ -69,10 +145,14 @@ def main():
                     print(f"[{cp_id}] Error de comunicación con Engine. Reintentando conexión...")
                     engine_socket.close()
                     engine_socket = connect_to_engine(engine_ip, engine_port)
+                    if engine_socket:
+                        send_key_to_engine(engine_socket, aes_key)
                     health_status = "KO"
             else:
                 print(f"[{cp_id}] Desconectado del Engine. Intentando reconectar...")
                 engine_socket = connect_to_engine(engine_ip, engine_port)
+                if engine_socket:
+                    send_key_to_engine(engine_socket, aes_key)
                 health_status = "KO"
 
             # Reportar estado a la CENTRAL (solo si cambia)
