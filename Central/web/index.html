@@ -4,48 +4,89 @@
   <meta charset="utf-8" />
   <title>EV Central · Panel</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/lucide-static@latest/font/lucide.css">
   <style>
     :root{
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, Arial;
-      --bg:#f5f7fa; --fg:#1f2937; --muted:#6b7280; --border:#e5e7eb; --card:#fff;
-      --shadow:0 1px 3px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.04);
-      --ok-bg:#d1fae5; --ok-fg:#065f46; --wr-bg:#fef3c7; --wr-fg:#92400e;
-      --bad-bg:#fee2e2; --bad-fg:#991b1b; --idle-bg:#f3f4f6; --idle-fg:#6b7280;
-      --btn-stop:#ef4444; --btn-resume:#10b981;
+      font-family:'Space Grotesk', system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, Arial;
+      --bg:radial-gradient(120% 120% at 20% 20%, rgba(80,151,255,0.16), rgba(0,0,0,0)), #0b1220;
+      --panel:#0f172a;
+      --card:rgba(24,34,56,0.7);
+      --card-strong:rgba(24,34,56,0.9);
+      --glass-border:1px solid rgba(255,255,255,0.08);
+      --shadow:0 20px 60px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.05);
+      --fg:#e5edff; --muted:#98a3c7;
+      --accent:#4f8bff; --accent-2:#34d5ff; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+      --border:#1f2b44;
     }
-    body{background:var(--bg);color:var(--fg);margin:1;padding:24px}
-    h1{margin:0 0 24px;font-size:26px;font-weight:600}
-    .layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px}
-    .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg);padding:26px;}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
+    h1{margin:0;font-size:24px;letter-spacing:0.02em;display:flex;align-items:center;gap:10px;}
+    .badge-live{display:inline-flex;align-items:center;gap:6px;background:rgba(79,139,255,0.16);padding:6px 10px;border-radius:999px;border:1px solid rgba(79,139,255,0.4);font-size:12px;color:#c6d8ff;}
 
-    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:16px 20px;display:flex;flex-direction:column;gap:10px}
-    .cp-header{display:flex;justify-content:space-between;align-items:center;font-size:15px;font-weight:600}
-    .cp-meta{text-align:center;color:var(--muted);font-size:14px;padding:6px 0 10px;border-bottom:1px solid var(--border)}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:20px;}
+    @media(max-width:1100px){.layout{grid-template-columns:1fr;}}
 
-    /* Stats centradas en columnas uniformes */
-    .stats{display:flex;justify-content:space-around;gap:12px;text-align:center;margin-top:4px}
-    .stat{min-width:90px}
-    .stat .label{font-size:12px;color:var(--muted)}
-    .stat .value{font-size:14px;font-weight:600;margin-top:2px}
+    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px;}
+    .kpi{background:linear-gradient(135deg, rgba(79,139,255,0.28), rgba(52,213,255,0.12));border:var(--glass-border);box-shadow:var(--shadow);border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;}
+    .kpi .icon{width:36px;height:36px;border-radius:12px;background:rgba(255,255,255,0.08);display:grid;place-items:center;color:#fff;flex-shrink:0;}
+    .kpi-title{font-size:12px;color:var(--muted);margin-bottom:4px;}
+    .kpi-value{font-size:20px;font-weight:600;}
 
-    .pill{padding:3px 10px;border-radius:999px;font-size:12px;display:inline-block;font-weight:500}
-    .ok{background:var(--ok-bg);color:var(--ok-fg)} .warn{background:var(--wr-bg);color:var(--wr-fg)}
-    .bad{background:var(--bad-bg);color:var(--bad-fg)} .idle{background:var(--idle-bg);color:var(--idle-fg)}
+    .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;}
+    .card{position:relative;background:var(--card);border:var(--glass-border);box-shadow:var(--shadow);border-radius:16px;padding:16px 16px 14px;overflow:hidden;}
+    .card::before{content:"";position:absolute;inset:-30% -30%;background:radial-gradient(circle at 20% 20%,rgba(79,139,255,0.12),rgba(52,213,255,0));opacity:0.8;pointer-events:none;}
+    .card-content{position:relative;z-index:1;}
+    .cp-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+    .cp-title{font-weight:600;font-size:16px;letter-spacing:0.01em;}
+    .pill{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,0.1);}
+    .ok{background:rgba(34,197,94,0.12);color:#8ff2b8;border-color:rgba(34,197,94,0.4);}
+    .warn{background:rgba(245,158,11,0.12);color:#fbd38d;border-color:rgba(245,158,11,0.4);}
+    .bad{background:rgba(239,68,68,0.12);color:#f9a5a5;border-color:rgba(239,68,68,0.4);}
+    .idle{background:rgba(255,255,255,0.04);color:var(--muted);}
 
-    .btn{border:0;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#fff}
-    .btn:disabled{opacity:.4;cursor:not-allowed}
-    .btn-stop{background:var(--btn-stop)} .btn-resume{background:var(--btn-resume)}
-    .cp-actions{display:flex;justify-content:center;gap:8px;margin-top:6px}
+    .cp-meta{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:10px;}
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
+    .stat{background:rgba(255,255,255,0.04);padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);}
+    .stat .label{font-size:12px;color:var(--muted);}
+    .stat .value{margin-top:2px;font-weight:600;}
 
-    .sidebar{background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:16px 20px}
-    .sidebar-title{font-size:16px;font-weight:600;margin-bottom:12px}
-    .statusline{font-size:13px;color:var(--muted);margin-top:10px}
-    .log{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-         font-size:12px;max-height:460px;overflow:auto;white-space:pre-wrap;word-break:break-word;border-top:1px solid var(--border);padding-top:10px}
+    .flow{position:relative;height:10px;border-radius:999px;overflow:hidden;background:rgba(79,139,255,0.15);border:1px solid rgba(79,139,255,0.35);margin-bottom:12px;}
+    .flow::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg, rgba(52,213,255,0) 0%, rgba(52,213,255,0.7) 50%, rgba(52,213,255,0) 100%);animation:flow 1.6s linear infinite;}
+    @keyframes flow{from{transform:translateX(-100%);}to{transform:translateX(100%);}}
+
+    .glow{box-shadow:0 0 0 rgba(52,213,255,0.45);animation:pulse 1.8s ease-in-out infinite;}
+    @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,213,255,0.55);}70%{box-shadow:0 0 0 12px rgba(52,213,255,0);}100%{box-shadow:0 0 0 0 rgba(52,213,255,0);}}
+
+    .cp-actions{display:flex;gap:10px;}
+    .btn{flex:1;border:0;padding:10px 12px;border-radius:10px;font-weight:600;cursor:pointer;color:#fff;transition:transform .08s ease,opacity .2s ease;}
+    .btn:active{transform:translateY(1px);}
+    .btn:disabled{opacity:.45;cursor:not-allowed;}
+    .btn-stop{background:linear-gradient(135deg,#ef4444,#b91c1c);}
+    .btn-resume{background:linear-gradient(135deg,#22c55e,#16a34a);}
+
+    .panel{background:var(--card-strong);border:var(--glass-border);box-shadow:var(--shadow);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px;}
+    .panel h2{margin:0;font-size:15px;letter-spacing:0.01em;color:#cdd8ff;display:flex;align-items:center;gap:8px;}
+    .drivers{display:flex;flex-direction:column;gap:10px;}
+    .driver{display:flex;justify-content:space-between;align-items:center;padding:10px;border-radius:12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);}
+    .driver small{color:var(--muted);font-size:12px;}
+    .driver .tag{padding:4px 8px;border-radius:8px;font-size:12px;background:rgba(79,139,255,0.18);border:1px solid rgba(79,139,255,0.4);}
+
+    .statusline{font-size:13px;color:var(--muted);}
+    .log{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-size:12px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.24);border-radius:10px;padding:12px;border:1px solid rgba(255,255,255,0.06);}
+    a{color:var(--accent);}
   </style>
 </head>
 <body>
-  <h1>EV Central · Panel</h1>
+  <header>
+    <h1><i class="lucide lucide-bolt"></i> EV Central · Panel</h1>
+    <span class="badge-live"><i class="lucide lucide-activity"></i> Monitoreo en tiempo real</span>
+  </header>
+
+  <div class="kpis" id="kpis"></div>
 
   <div class="layout">
     <div>
@@ -53,8 +94,10 @@
       <div class="statusline">Telemetría en vivo por WebSocket – <span id="status">Conectando…</span></div>
     </div>
 
-    <div class="sidebar">
-      <div class="sidebar-title">Actividad</div>
+    <div class="panel">
+      <h2><i class="lucide lucide-users"></i> Drivers conectados</h2>
+      <div id="drivers" class="drivers"></div>
+      <h2><i class="lucide lucide-clipboard-list"></i> Actividad</h2>
       <div id="log" class="log"></div>
     </div>
   </div>
@@ -63,68 +106,141 @@
     const cardsEl=document.getElementById('cp-cards');
     const statusEl=document.getElementById('status');
     const logEl=document.getElementById('log');
+    const driversEl=document.getElementById('drivers');
+    const kpisEl=document.getElementById('kpis');
 
-    function pillFor(state){
+    const cpNodes=new Map(); // id -> DOM node cache
+
+    function stateInfo(state){
       const s=(state||'').toLowerCase();
-      if(s.includes('suministr')) return `<span class="pill ok">Suministrando</span>`;
-      if(s.includes('activ')) return `<span class="pill ok">Activado</span>`;
-      if(s.includes('parado')) return `<span class="pill warn">Parado</span>`;
-      if(s.includes('averi')) return `<span class="pill bad">Averiado</span>`;
-      if(s.includes('desconect')) return `<span class="pill idle">Desconectado</span>`;
-      return `<span class="pill idle">${state||'-'}</span>`;
+      if(s.includes('suministr')) return {cls:'ok', label:'Suministrando'};
+      if(s.includes('activ')) return {cls:'ok', label:'Activado'};
+      if(s.includes('parado')) return {cls:'warn', label:'Parado'};
+      if(s.includes('averi')) return {cls:'bad', label:'Averiado'};
+      if(s.includes('desconect')) return {cls:'idle', label:'Desconectado'};
+      return {cls:'idle', label:state||'-'};
     }
 
-    function render(data){
-      const keys=Object.keys(data||{}).sort();
-      const cards=[];
-      for(const id of keys){
-        const cp=data[id]||{};
-        const driver=cp.driver||'—';
-        const consumo=cp.consumo!=null?`${Number(cp.consumo).toFixed(2)} kWh`:'—';
-        const importe=cp.importe!=null?`${Number(cp.importe).toFixed(2)} €`:'—';
-        const state=cp.state||'—';
-
-        cards.push(`
-          <div class="card">
-            <div class="cp-header">
-              <span>${id}</span>
-              ${pillFor(state)}
+    function ensureCard(cpId){
+      if(cpNodes.has(cpId)) return cpNodes.get(cpId);
+      const card=document.createElement('div');
+      card.className='card';
+      card.innerHTML=`
+        <div class="card-content">
+          <div class="cp-header">
+            <span class="cp-title">${cpId}</span>
+            <span class="pill idle" data-pill></span>
+          </div>
+          <div class="cp-meta"><i class="lucide lucide-map-pin"></i> <span data-location>—</span></div>
+          <div class="stats">
+            <div class="stat">
+              <div class="label">Driver</div>
+              <div class="value" data-driver>—</div>
             </div>
-
-            <div class="cp-meta">${cp.location||'—'}</div>
-
-            <div class="stats">
-              <div class="stat">
-                <div class="label">Driver</div>
-                <div class="value">${driver}</div>
-              </div>
-              <div class="stat">
-                <div class="label">Consumo</div>
-                <div class="value">${consumo}</div>
-              </div>
-              <div class="stat">
-                <div class="label">Importe</div>
-                <div class="value">${importe}</div>
-              </div>
+            <div class="stat">
+              <div class="label">Consumo</div>
+              <div class="value" data-consumo>—</div>
             </div>
-
-            <div class="cp-actions">
-              <button class="btn btn-stop"
-                onclick="sendCmd('${id}','STOP')"
-                ${state.toLowerCase().includes('desconect') ? 'disabled' : ''}>
-                Parar
-              </button>
-
-              <button class="btn btn-resume"
-                onclick="sendCmd('${id}','RESUME')"
-                ${state.toLowerCase().includes('desconect') ? 'disabled' : ''}>
-                Reanudar
-              </button>
+            <div class="stat">
+              <div class="label">Importe</div>
+              <div class="value" data-importe>—</div>
             </div>
           </div>
-        `);
+          <div class="flow" data-flow hidden></div>
+          <div class="cp-actions">
+            <button class="btn btn-stop" data-stop>Parar</button>
+            <button class="btn btn-resume" data-resume>Reanudar</button>
+          </div>
+        </div>`;
+      cardsEl.appendChild(card);
+      cpNodes.set(cpId, card);
+      return card;
+    }
+
+    function updateCard(cpId, cp){
+      const card=ensureCard(cpId);
+      card.querySelector('[data-location]').textContent=cp.location||'—';
+      card.querySelector('[data-driver]').textContent=cp.driver||'—';
+      card.querySelector('[data-consumo]').textContent=cp.consumo!=null?`${Number(cp.consumo).toFixed(2)} kWh`:'—';
+      card.querySelector('[data-importe]').textContent=cp.importe!=null?`${Number(cp.importe).toFixed(2)} €`:'—';
+
+      const state=cp.state||'—';
+      const {cls,label}=stateInfo(state);
+      const pill=card.querySelector('[data-pill]');
+      pill.className=`pill ${cls}`;
+      pill.textContent=label;
+
+      const flow=card.querySelector('[data-flow]');
+      const stopBtn=card.querySelector('[data-stop]');
+      const resumeBtn=card.querySelector('[data-resume]');
+      const lower=state.toLowerCase();
+      const active=lower.includes('suministr');
+      flow.hidden=!active;
+      card.classList.toggle('glow', active);
+
+      const disable=lower.includes('desconect');
+      stopBtn.disabled=disable;
+      resumeBtn.disabled=disable;
+      stopBtn.onclick=()=>sendCmd(cpId,'STOP');
+      resumeBtn.onclick=()=>sendCmd(cpId,'RESUME');
+    }
+
+    function renderDrivers(drivers){
+      driversEl.innerHTML='';
+      if(!drivers.length){
+        driversEl.innerHTML='<div class="driver"><span>No hay drivers conectados</span></div>';
+        return;
       }
-      cardsEl.innerHTML=cards.join('');
+      for(const d of drivers){
+        const el=document.createElement('div');
+        el.className='driver';
+        el.innerHTML=`<div><div>${d.id}</div><small>${d.state}</small></div><span class="tag">${d.cp||'Sin CP'}</span>`;
+        driversEl.appendChild(el);
+      }
+    }
+
+    function renderKpis(snapshot){
+      const cps=Object.values(snapshot);
+      const total=cps.length;
+      const activas=cps.filter(cp=>(cp.state||'').toLowerCase().includes('suministr')).length;
+      const kwh=cps.reduce((acc,cp)=>acc+(Number(cp.consumo)||0),0);
+      const drivers=new Set(cps.map(cp=>cp.driver).filter(Boolean));
+      const tpl=(icon,label,val)=>`
+        <div class="kpi">
+          <div class="icon"><i class="lucide ${icon}"></i></div>
+          <div>
+            <div class="kpi-title">${label}</div>
+            <div class="kpi-value">${val}</div>
+          </div>
+        </div>`;
+      kpisEl.innerHTML=[
+        tpl('lucide-plug','Total CPs',total),
+        tpl('lucide-bolt','Cargas activas',activas),
+        tpl('lucide-battery-charging','kWh totales',kwh.toFixed(2)),
+        tpl('lucide-user-round','Drivers conectados',drivers.size),
+      ].join('');
+    }
+
+    function render(snapshot){
+      const ids=Object.keys(snapshot||{}).sort();
+      // remove cards that disappeared
+      for(const existing of Array.from(cpNodes.keys())){
+        if(!ids.includes(existing)){
+          cpNodes.get(existing).remove();
+          cpNodes.delete(existing);
+        }
+      }
+      ids.forEach(id=>updateCard(id, snapshot[id]||{}));
+
+      const drivers=[];
+      ids.forEach(id=>{
+        const cp=snapshot[id]||{};
+        if(cp.driver){
+          drivers.push({id:cp.driver, cp:id, state:cp.state||'—'});
+        }
+      });
+      renderDrivers(drivers);
+      renderKpis(snapshot);
     }
 
     function log(line){ logEl.textContent=`[${new Date().toLocaleTimeString()}] ${line}\n`+logEl.textContent; }
