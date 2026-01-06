@@ -1,0 +1,20 @@
+# Deploy/Dockerfile.registry
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instalamos dependencias básicas
+RUN pip install --no-cache-dir fastapi uvicorn pydantic requests
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install -r /app/requirements.txt
+
+# Creamos usuario sin privilegios por seguridad
+RUN useradd -m appuser
+USER appuser
+
+# Copiamos el código fuente (se hará desde el docker-compose)
+COPY Registry /app/Registry
+
+# Comando por defecto (se puede sobreescribir en docker-compose)
+ENTRYPOINT ["python", "Registry/EV_Registry.py"]
