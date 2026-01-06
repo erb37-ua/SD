@@ -44,6 +44,20 @@ def write_token_log(cp_id, token):
         print(f"[{cp_id}] No se pudo escribir el token en {log_path}: {exc}")
         return None
 
+def write_central_key_log(cp_id, aes_key):
+    log_path = os.getenv("CENTRAL_KEY_LOG_PATH")
+    if not log_path:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        log_path = os.path.join(base_dir, "central_keys.log")
+    try:
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} | cp_id={cp_id} | key={aes_key}\n")
+        return log_path
+    except OSError as exc:
+        print(f"[{cp_id}] No se pudo escribir la clave en {log_path}: {exc}")
+        return None
+
 def get_registry_token(registry_url, cp_id, location, verify_ssl):
     url = registry_url.rstrip("/") + "/register"
     try:
@@ -116,9 +130,15 @@ def main():
 
         # Esperar respuesta (ACK) del servidor
         response_data = central_socket.recv(1024).decode("utf-8").strip()
-        print(f"[{cp_id}] Respuesta de CENTRAL: {response_data}")
+        display_response = response_data
+        if response_data.startswith("ACK#KEY#"):
+            display_response = "ACK#KEY#<clave>"
+        print(f"[{cp_id}] Respuesta de CENTRAL: {display_response}")
         if response_data.startswith("ACK#KEY#"):
             aes_key = response_data.split("#", 2)[2]
+            key_log_path = write_central_key_log(cp_id, aes_key)
+            if key_log_path:
+                print(f"[{cp_id}] Clave guardada en {key_log_path}")
         else:
             print(f"[{cp_id}] Registro rechazado o sin clave AES.")
             return

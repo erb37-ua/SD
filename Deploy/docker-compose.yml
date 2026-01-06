@@ -65,7 +65,7 @@ services:
       - ../ChargingPoints:/app 
     ports: 
       - "7000-7009:7000-7009"
-    command: ["sh", "-c", "python EV_CP_E.py $$ENGINE_PORT $$KAFKA_BOOTSTRAP $$CP_ID"]
+    command: ["sleep", "infinity"]
 
   ev_cp_m:
     image: ev_cp_e:latest
@@ -87,7 +87,7 @@ services:
       - CP_LOCATION=Dock-1
     volumes:
       - ../ChargingPoints:/app
-    command: ["sh", "-c", "python EV_CP_M.py $$CENTRAL_HOST $$CENTRAL_PORT $$CP_ID $$ENGINE_HOST $$ENGINE_PORT"]
+    command: ["sleep", "infinity"]
 
   driver:
     build:
