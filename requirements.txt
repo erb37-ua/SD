@@ -3,3 +3,5 @@ pymongo
 fastapi==0.110.*
 uvicorn==0.30.*
 websockets>=11
+requests
+cryptography
