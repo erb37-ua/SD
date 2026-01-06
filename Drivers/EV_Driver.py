@@ -1,25 +1,42 @@
 import sys
 import json
 import time
-from confluent_kafka import Producer, Consumer, KafkaError
-import uuid
 import threading
+from confluent_kafka import Producer, Consumer, KafkaError
 
-# Evento global para coordinar los hilos, se usará para avisar que la recarga ha terminado (por ticket/parada)
+# Evento global para coordinar los hilos
 charge_complete_event = threading.Event()
 
 def delivery_report(err, msg):
-    """ 
-    Callback de productor: se llama cuando un mensaje es entregado o falla. 
-    """
+    """ Callback de productor """
     if err is not None:
         print(f"Fallo al enviar mensaje: {err}")
 
-
-def kafka_ticket_listener(broker: str, driver_id: str, cp_id: str):
+# --- NUEVO: Hilo de Envío de Heartbeat ---
+def heartbeat_sender(producer, driver_id, cp_id):
     """
-    Se ejecuta en un hilo separado.
-    Crea su propio consumidor y espera el ticket de finalización.
+    Envía un pulso al CP cada 2 segundos para indicar que el Driver sigue vivo.
+    Si este script muere, el CP dejará de recibir esto y cortará la carga.
+    """
+    print(f"[{driver_id}] Iniciando envío de Heartbeat a {cp_id}...")
+    while not charge_complete_event.is_set():
+        try:
+            hb_data = {
+                'driverId': driver_id,
+                'cpId': cp_id,
+                'action': 'HEARTBEAT'
+            }
+            producer.produce('commands', value=json.dumps(hb_data).encode('utf-8'))
+            producer.poll(0)
+            time.sleep(2) # Enviar cada 2 segundos
+        except Exception as e:
+            print(f"[Heartbeat] Error enviando latido: {e}")
+            break
+    print(f"[{driver_id}] Heartbeat detenido.")
+
+def kafka_listener(broker: str, driver_id: str, cp_id: str):
+    """
+    Escucha 'tickets' (para fin normal) y 'telemetry' (para detectar averías del CP).
     """
     consumer = None
     try:
@@ -29,66 +46,66 @@ def kafka_ticket_listener(broker: str, driver_id: str, cp_id: str):
             'auto.offset.reset': 'latest'
         }
         consumer = Consumer(consumer_config)
-        consumer.subscribe(['tickets'])
-        print(f"[{driver_id}] Hilo listener de 'tickets' iniciado, buscando {cp_id}...")
+        # MODIFICADO: Escuchar también telemetry para saber si el CP se avería
+        consumer.subscribe(['tickets', 'telemetry'])
+        print(f"[{driver_id}] Escuchando Tickets y Telemetría de {cp_id}...")
 
-        while not charge_complete_event.is_set(): # Sigue escuchando hasta que el evento se active
+        while not charge_complete_event.is_set():
             msg = consumer.poll(timeout=1.0)
-            if msg is None: 
-                continue
+            if msg is None: continue
             
             if msg.error():
-                print(f"[Error Hilo Kafka] {msg.error()}")
                 continue
             
             try:
-                ticket = json.loads(msg.value().decode('utf-8'))
+                topic = msg.topic()
+                data = json.loads(msg.value().decode('utf-8'))
                 
-                # Comprobar si es NUESTRO ticket
-                if ticket.get('driverId') == driver_id and ticket.get('cpId') == cp_id:
-                    print(f"\n--- TICKET RECIBIDO (para {cp_id}) ---")
-                    print(f"  Estado: {ticket.get('status')}")
-                    if ticket.get('status') == 'COMPLETED':
-                        print(f"  Consumo: {ticket.get('final_consumo_kw')} kWh")
-                        print(f"  Importe: {ticket.get('final_importe_eur')} €")
+                # Filtrar mensajes que no sean de nuestro CP o Driver
+                if data.get('cpId') != cp_id:
+                    continue
+
+                # CASO 1: Recibimos un TICKET (Fin de carga normal)
+                if topic == 'tickets' and data.get('driverId') == driver_id:
+                    print(f"\n--- TICKET RECIBIDO ---")
+                    print(f"  Estado: {data.get('status')}")
+                    if data.get('status') == 'COMPLETED':
+                        print(f"  Consumo Final: {data.get('final_consumo_kw')} kWh")
+                        print(f"  Importe Final: {data.get('final_importe_eur')} €")
                     else:
-                        print(f"  Razón: {ticket.get('reason')}")
-                    print("-------------------------")
-                    
-                    charge_complete_event.set() # Avisa al hilo principal que se ha termindado
+                        print(f"  Razón: {data.get('reason')}")
+                    print("-----------------------")
+                    charge_complete_event.set()
+
+                # CASO 2: Recibimos TELEMETRÍA (Monitorizar averías del CP)
+                elif topic == 'telemetry':
+                    # Si el CP reporta estado ERROR o el driverId coincide y status es Fault
+                    status = data.get('status')
+                    if status == 'ERROR':
+                        print(f"\n[ALERTA] El CP {cp_id} ha reportado una AVERÍA/ERROR.")
+                        print(f"Razón: {data.get('reason', 'Unknown')}")
+                        print("Deteniendo interfaz del conductor...")
+                        charge_complete_event.set()
 
             except json.JSONDecodeError:
-                print("[Error Hilo Kafka] Error al decodificar ticket JSON.")
+                pass
             except Exception as e:
-                print(f"[Error Hilo Kafka] {e}")
+                print(f"[Error Listener] {e}")
 
     except Exception as e:
-        print(f"[Error Hilo Kafka] Excepción grave: {e}")
+        print(f"[Error Listener] Excepción grave: {e}")
     finally:
         if consumer:
             consumer.close()
-        print(f"[{driver_id}] Hilo listener de 'tickets' detenido.")
-
 
 def send_stop_command(producer: Producer, driver_id: str, cp_id: str):
-    """
-    Envía una petición de parada al topic 'commands'.
-    """
-    print(f"[!] Enviando petición de PARADA para {cp_id}...")
+    print(f"[!] Enviando petición de PARADA manual...")
     try:
-        command_data = {
-            'driverId': driver_id,
-            'cpId': cp_id,
-            'action': 'STOP' # El engine debe ser modificado para entender esto
-        }
-        payload = json.dumps(command_data).encode('utf-8')
-        
-        producer.produce('commands', value=payload, callback=delivery_report)
-        producer.flush() # Asegurar que se envía antes de continuar
-        print(f"[!] Petición de PARADA enviada.")
+        command_data = {'driverId': driver_id, 'cpId': cp_id, 'action': 'STOP'}
+        producer.produce('commands', value=json.dumps(command_data).encode('utf-8'), callback=delivery_report)
+        producer.flush()
     except Exception as e:
-        print(f"[Error Productor] No se pudo enviar la parada: {e}")
-
+        print(f"[Error] No se pudo enviar parada: {e}")
 
 def main():
     if len(sys.argv) < 3:
@@ -101,85 +118,93 @@ def main():
     producer_config = {'bootstrap.servers': broker}
     producer = Producer(producer_config)
     
-    # El consumidor se creará dentro del hilo de escucha
-
     try:
-        # Bucle interactivo principal
         while True:
             print("\n--- MENÚ PRINCIPAL (Driver) ---")
-            print("Introduzca el ID del CP para INICIAR CARGA (ej: CP001):")
-            print("Escriba 'q' para salir.")
-            
+            print("Introduzca el ID del CP para INICIAR CARGA (ej: CP001) o 'q' para salir:")
             cp_id_input = input("Opción: ").strip()
 
             if cp_id_input.lower() == 'q':
-                print(f"[{driver_id}] Saliendo...")
                 break
-            
             if not cp_id_input:
                 continue
 
             current_cp_id = cp_id_input
-            
-            # Limpiar el evento por si se usó antes
             charge_complete_event.clear()
 
-            # Crear y arrancar el Hilo de Escucha Kafka
+            # 1. Hilo Escucha (Tickets y Errores de CP)
             listener_thread = threading.Thread(
-                target=kafka_ticket_listener,
+                target=kafka_listener,
                 args=(broker, driver_id, current_cp_id),
-                daemon=True # El hilo morirá si el programa principal cierra
+                daemon=True
             )
             listener_thread.start()
 
-            # Enviar la petición de recarga (en el hilo principal)
-            try:
-                request_data = {
-                    'driverId': driver_id,
-                    'cpId': current_cp_id
-                }
-                payload = json.dumps(request_data).encode('utf-8')
-                producer.produce('requests', value=payload, callback=delivery_report)
-                producer.poll(0)
-                print(f"\n[{driver_id}] Petición enviada para CP: {current_cp_id}")
-            except Exception as e:
-                print(f"[Error Productor] No se pudo enviar la petición: {e}")
-                charge_complete_event.set() # Avisa al hilo listener que pare
-                continue # Volver al menú
-
-            # El hilo principal se queda esperando la entrada del usuario
-            print(f"[{driver_id}] Recarga en curso... (Pulsa 'p' y Enter para PARAR)")
+            # 2. Hilo Heartbeat (Mantener viva la conexión)
+            hb_thread = threading.Thread(
+                target=heartbeat_sender,
+                args=(producer, driver_id, current_cp_id),
+                daemon=True
+            )
             
+            # Enviar Petición de Inicio
+            try:
+                request_data = {'driverId': driver_id, 'cpId': current_cp_id}
+                producer.produce('requests', value=json.dumps(request_data).encode('utf-8'), callback=delivery_report)
+                producer.poll(0)
+                print(f"\n[{driver_id}] Petición enviada. Esperando inicio de carga...")
+            except Exception as e:
+                print(f"[Error] Fallo al enviar petición: {e}")
+                charge_complete_event.set()
+                continue
+
+            # Arrancamos el heartbeat (asumimos que empezará a cargar pronto)
+            hb_thread.start()
+
+            print(f"[{driver_id}] Interfaz activa. Pulsa 'p' y Enter para PARAR MANUALMENTE.")
+            
+            # Bucle de entrada de usuario (Bloqueante)
             while not charge_complete_event.is_set():
                 try:
-                    # Este input() bloquea el hilo principal, mientras el otro hilo escucha Kafka
-                    user_input = input() 
-                    if user_input.lower() == 'p':
-                        print("... Petición de PARADA recibida.")
-                        send_stop_command(producer, driver_id, current_cp_id)
-                        charge_complete_event.set() # Avisa al hilo listener que pare
-                        break # Salir del bucle de input
+                    # Usamos select o input con timeout simulado es complejo en python puro multiplataforma
+                    # para simplificar, usamos input bloqueante en un hilo o polling simple si no hay input.
+                    # Aquí mantenemos el input bloqueante, pero si el evento se activa (por ticket o error CP),
+                    # necesitamos que el usuario pulse enter o gestionarlo.
+                    # Para simplificar la UX en consola:
+                    if sys.platform == 'win32':
+                         import msvcrt
+                         if msvcrt.kbhit():
+                             key = msvcrt.getch()
+                             if key.lower() == b'p':
+                                 send_stop_command(producer, driver_id, current_cp_id)
+                                 break
+                         time.sleep(0.5)
+                    else:
+                        # Versión simplificada para Linux/Mac (requiere Enter)
+                        # Nota: Si el CP falla, el mensaje saldrá, pero el input seguirá esperando un Enter.
+                        # Es una limitación de consola simple.
+                        import select
+                        i, o, e = select.select( [sys.stdin], [], [], 1 )
+                        if (i):
+                            user_input = sys.stdin.readline().strip()
+                            if user_input.lower() == 'p':
+                                send_stop_command(producer, driver_id, current_cp_id)
+                                break
+                        
                 except KeyboardInterrupt:
-                    print(f"\n[{driver_id}] ¡Ctrl+C detectado! Enviando parada de emergencia...")
                     send_stop_command(producer, driver_id, current_cp_id)
-                    charge_complete_event.set()
-                    # Esperamos un momento para asegurar que Kafka envíe el mensaje antes de morir
-                    time.sleep(1) 
-                    sys.exit(0) # Salimos del programa
-                except EOFError:
-                    break # Salir si se presiona Ctrl+D
-            
-            # La recarga ha terminado (por ticket o por 'p')
-            print(f"[{driver_id}] Sesión de recarga para {current_cp_id} finalizada.")
-            listener_thread.join(timeout=2.0) # Espera a que el hilo listener termine
-            print("Volviendo al menú principal...")
+                    time.sleep(1)
+                    sys.exit(0)
+
+            print(f"[{driver_id}] Sesión finalizada. Deteniendo hilos...")
+            charge_complete_event.set() # Asegurar parada
+            hb_thread.join(timeout=1)
+            listener_thread.join(timeout=1)
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print(f"\n[{driver_id}] Proceso interrumpido.")
-        charge_complete_event.set() # Asegurarse de que todos los hilos mueran
+        print("\nSaliendo...")
     finally:
-        print(f"[{driver_id}] Cerrando productor.")
         producer.flush()
 
 if __name__ == "__main__":
