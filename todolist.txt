@@ -1,3 +1,5 @@
 - a veces no se generan tickets? no lo comprendo muy bien
 - al cerrar el driver mientras suministra en la central sigue suministrando
-- hay que comprobar todos los casos de los drivers (hay fallos tontos)
+- cuando el engine provoca una avería el driver no para el bucle de parar (heart beat)
+- no detecta el engine un cambio de drivers
+- el registro debe acceder a la base de datos para guardar el token de autentificacion
