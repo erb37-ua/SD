@@ -159,13 +159,15 @@ def main():
                         send_stop_command(producer, driver_id, current_cp_id)
                         charge_complete_event.set() # Avisa al hilo listener que pare
                         break # Salir del bucle de input
-
+                except KeyboardInterrupt:
+                    print(f"\n[{driver_id}] ¡Ctrl+C detectado! Enviando parada de emergencia...")
+                    send_stop_command(producer, driver_id, current_cp_id)
+                    charge_complete_event.set()
+                    # Esperamos un momento para asegurar que Kafka envíe el mensaje antes de morir
+                    time.sleep(1) 
+                    sys.exit(0) # Salimos del programa
                 except EOFError:
                     break # Salir si se presiona Ctrl+D
-                except KeyboardInterrupt:
-                    print("... Interrupción manual.")
-                    charge_complete_event.set() # Avisa al hilo listener que pare
-                    raise # Propaga la interrupción para salir del programa
             
             # La recarga ha terminado (por ticket o por 'p')
             print(f"[{driver_id}] Sesión de recarga para {current_cp_id} finalizada.")

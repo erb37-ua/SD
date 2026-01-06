@@ -1,4 +1,3 @@
-- quitar el request.txt de los parámetros del driver
-- menú de opciones para la conexión driver-cp y requests de cargas
-- coger ip automática docker compose (script)
-- añadir más CPs en la base de datos
+- a veces no se generan tickets? no lo comprendo muy bien
+- al cerrar el driver mientras suministra en la central sigue suministrando
+- hay que comprobar todos los casos de los drivers (hay fallos tontos)

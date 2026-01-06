@@ -32,6 +32,9 @@ kafka_producer = None
 stop_event_threads = threading.Event()   # para hilos
 stop_event_async = None                  # será asyncio.Event()
 
+# Estructura para la cola
+pending_requests = []
+
 def get_state_snapshot():
     """
     Devuelve una copia segura del estado de los CPs para el panel web.
@@ -361,15 +364,22 @@ def kafka_requests_consumer(broker, stop_evt: threading.Event):
                 with db_lock:
                     cp = charging_points.get(cp_id)
 
-                if cp and cp['state'] == 'Activado':
-                    auth_message = {'cpId': cp_id, 'driverId': driver_id, 'action': 'AUTHORIZE'}
-                    send_kafka_message('commands', auth_message)
-                    print(f"[Kafka Command] Autorización enviada a {cp_id} para {driver_id}")
-                else:
-                    reason = "CP no disponible o averiado" if cp else "CP desconocido"
-                    ticket_message = {'driverId': driver_id, 'cpId': cp_id, 'status': 'REJECTED', 'reason': reason}
-                    send_kafka_message('tickets', ticket_message)
-                    print(f"[Kafka Ticket] Petición rechazada para {driver_id} ({reason})")
+                if cp:
+                    if cp['state'] == 'Activado':
+                        # CP Libre: Autorizar
+                        cp['state'] = 'Ocupado_temporal' # Marcamos temporalmente para evitar doble asignación rápida
+                        auth_message = {'cpId': cp_id, 'driverId': driver_id, 'action': 'AUTHORIZE'}
+                        send_kafka_message('commands', auth_message)
+                        print(f"[Central] Autorizando inmediatamente a {driver_id} en {cp_id}")
+                    elif cp['state'] == 'Suministrando':
+                        # CP Ocupado: A la cola
+                        print(f"[Central] CP {cp_id} ocupado. Añadiendo {driver_id} a la cola.")
+                        pending_requests.append(request)
+                    else:
+                        # Averiado o Desconectado: Rechazar
+                        reason = "CP Averiado/Desconectado"
+                        ticket_message = {'driverId': driver_id, 'cpId': cp_id, 'status': 'REJECTED', 'reason': reason}
+                        send_kafka_message('tickets', ticket_message)
 
         except Exception as e:
             print(f"[Error] Excepción grave en consumidor de 'requests': {e}")
@@ -402,31 +412,29 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
 
             while not stop_evt.is_set():
                 msg = consumer.poll(1.0)
-                if msg is None:
-                    continue
-                if msg.error():
-                    err_code = msg.error().code()
-                    if err_code == KafkaError.UNKNOWN_TOPIC_OR_PART:
-                        print("[Kafka] Topic 'telemetry' no encontrado, re-intentando subscripción...")
-                        break
-                    else:
-                        print(f"[Error Kafka Telemetry] {msg.error()}")
-                        continue
+                if msg is None: continue
+                if msg.error(): continue # Gestión de errores simplificada para el ejemplo
 
                 try:
                     telemetry = json.loads(msg.value().decode('utf-8'))
-                except Exception:
-                    print("[Error Kafka Telemetry] Mensaje con JSON inválido.")
-                    continue
+                except Exception: continue
 
                 cp_id = telemetry.get('cpId')
                 status = telemetry.get('status')
 
                 with db_lock:
-                    if cp_id not in charging_points:
-                        continue
+                    if cp_id not in charging_points: continue
+
+                    # --- CORRECCIÓN AQUÍ ---
+                    current_db_state = charging_points[cp_id]['state']
 
                     if status == 'CHARGING':
+                        # PROTECCIÓN CONTRA RACE CONDITION:
+                        # Si por socket ya nos han dicho que está AVERIADO, ignoramos este mensaje
+                        # de "Cargando" que puede venir con retraso.
+                        if current_db_state == "Averiado":
+                            continue
+
                         charging_points[cp_id]['state'] = "Suministrando"
                         charging_points[cp_id]['driver'] = telemetry.get('driverId')
                         charging_points[cp_id]['consumo'] = telemetry.get('consumo_kw', 0.0)
@@ -447,25 +455,42 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                         charging_points[cp_id]['driver'] = None
                         charging_points[cp_id]['consumo'] = 0.0
                         charging_points[cp_id]['importe'] = 0.0
-                    
+                        
+                        req_to_process = None
+                        for req in pending_requests:
+                            if req['cpId'] == cp_id:
+                                req_to_process = req
+                                break
+                        
+                        if req_to_process:
+                            pending_requests.remove(req_to_process)
+                            next_driver = req_to_process['driverId']
+                            print(f"[Central] Cola: Asignando CP {cp_id} liberado a {next_driver}")
+                            auth_message = {'cpId': cp_id, 'driverId': next_driver, 'action': 'AUTHORIZE'}
+                            send_kafka_message('commands', auth_message)
+
                     elif status == 'STOPPED':
                         print(f"[Kafka Telemetry] Recibida parada (STOPPED) de {cp_id}")
-                        # NO enviar ticket, solo resetear el estado del CP
                         charging_points[cp_id]['state'] = "Activado"
                         charging_points[cp_id]['driver'] = None
                         charging_points[cp_id]['consumo'] = 0.0
                         charging_points[cp_id]['importe'] = 0.0
 
-        except Exception as e:
-            print(f"[Error] Excepción grave en consumidor de 'telemetry': {e}")
-        finally:
-            if consumer:
-                consumer.close()
-            if not stop_evt.is_set():
-                print("[Kafka] Consumidor 'telemetry' cerrado, reintentando en 3s...")
-                time.sleep(3)
+                    # --- NUEVA GESTIÓN DE ERROR ---
+                    elif status == 'ERROR':
+                        print(f"[Kafka Telemetry] Recibido ERROR técnico de {cp_id}")
+                        # Forzamos el estado a Averiado y limpiamos el driver
+                        charging_points[cp_id]['state'] = "Averiado"
+                        charging_points[cp_id]['driver'] = None
+                        charging_points[cp_id]['consumo'] = 0.0
+                        charging_points[cp_id]['importe'] = 0.0
 
-    print("[Kafka] Hilo consumidor 'telemetry' detenido.")
+        except Exception as e:
+            print(f"[Error] Excepción en telemetry: {e}")
+        finally:
+            if consumer: consumer.close()
+            time.sleep(3)
+
 
 def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
     """

@@ -55,7 +55,8 @@ def input_thread():
 # Hilo de Simulación de Recarga
 def charging_simulation_thread(driver_id, stop_evt: threading.Event):
     """
-    Simula una recarga de 10 segundos, enviando telemetría
+    Simula una recarga INDEFINIDA hasta que se recibe una orden de parada
+    o ocurre una avería.
     """
     global is_faulty, is_charging, is_stopped_by_central
     
@@ -65,63 +66,73 @@ def charging_simulation_thread(driver_id, stop_evt: threading.Event):
     
     consumo_total_kw = 0.0
     importe_total_eur = 0.0
-    precio_kwh = 0.50
+    precio_kwh = 0.50 # Esto podría venir de la configuración
     
-    print(f"[Simulación] Iniciando recarga para {driver_id}...")
+    print(f"[Simulación] Iniciando recarga INDEFINIDA para {driver_id}...")
 
-    charge_interrupted = False
+    charge_aborted_by_fault = False
 
-    for i in range(10): # Simular 10 segundos
-        if stop_evt.is_set():
-            print("[Simulación] Recarga INTERRUMPIDA por comando STOP (Driver o Admin).")
-            charge_interrupted = True
-            break
-
-        time.sleep(1) 
+    # Bucle infinito: Mantiene la carga mientras NO se pida parar
+    while not stop_evt.is_set():
         
+        # 1. Comprobar Averías
         with fault_lock:
             if is_faulty:
                 print("[Simulación] ¡AVERÍA durante la recarga! Interrumpiendo.")
-                charge_interrupted = True
+                charge_aborted_by_fault = True
                 break 
         
-        # Simular consumo
+        # 2. Simular paso del tiempo (1 segundo)
+        time.sleep(1)
+        
+        # 3. Comprobar de nuevo si se ha pedido parar durante el sleep
+        if stop_evt.is_set():
+            print("[Simulación] Recarga DETENIDA por comando (Driver o Central).")
+            break
+
+        # 4. Simular consumo
         consumo_seg = random.uniform(0.5, 2.0)
         importe_seg = consumo_seg * precio_kwh
         consumo_total_kw += consumo_seg
         importe_total_eur += importe_seg
         
-        # Enviar telemetría de recarga
+        # 5. Enviar telemetría de recarga en curso
         telemetry_data = {
             'cpId': cp_id_global,
             'driverId': driver_id,
             'status': 'CHARGING',
             'consumo_kw': round(consumo_total_kw, 3),
-            'importe_eur': round(importe_total_eur, 2)
+            'importe_eur': round(importe_total_eur, 2),
+            'final_consumo_kw': round(consumo_total_kw, 3),
+            'final_importe_eur': round(importe_total_eur, 2)
         }
         send_kafka_message('telemetry', telemetry_data)
-        print(f"[Simulación] Telemetría {i+1}/10 enviada.")
+        # print(f"[Simulación] Telemetría enviada... {round(consumo_total_kw, 2)} kWh") # Opcional: comentar para no saturar consola
 
-    if not charge_interrupted:
-        # Simulación finalizada (normalmente)
-        print(f"[Simulación] Recarga finalizada para {driver_id}.")
+    # --- FIN DEL BUCLE (Salida por Stop o Avería) ---
+
+    if charge_aborted_by_fault:
+        # Si fue por avería, NO hay ticket válido o es un error
+        print(f"[Simulación] Recarga abortada por fallo técnico.")
+        stop_data = {
+            'cpId': cp_id_global,
+            'driverId': driver_id,
+            'status': 'ERROR',
+            'reason': 'Technical Fault'
+        }
+        send_kafka_message('telemetry', stop_data)
+    else:
+        # Si salimos del while, es porque stop_evt.is_set() es True (Parada manual/Central)
+        # AUNQUE SEA UNA PARADA MANUAL, EL CLIENTE DEBE PAGAR LO CONSUMIDO -> TICKET
+        print(f"[Simulación] Recarga finalizada correctamente para {driver_id}.")
         completion_data = {
             'cpId': cp_id_global,
             'driverId': driver_id,
-            'status': 'COMPLETED',
+            'status': 'COMPLETED', # Marcamos como completado para generar ticket
             'final_consumo_kw': round(consumo_total_kw, 3),
             'final_importe_eur': round(importe_total_eur, 2)
         }
         send_kafka_message('telemetry', completion_data)
-    else:
-        # Si fue interrumpida, enviar un mensaje 'STOPPED'
-        print(f"[Simulación] Recarga para {driver_id} parada sin ticket.")
-        stop_data = {
-            'cpId': cp_id_global,
-            'driverId': driver_id,
-            'status': 'STOPPED'
-        }
-        send_kafka_message('telemetry', stop_data)
 
     # Resetear estado
     with charge_lock:
@@ -131,6 +142,7 @@ def charging_simulation_thread(driver_id, stop_evt: threading.Event):
     with current_charge_lock:
         global current_charge_stop_event
         current_charge_stop_event = None
+
 
 # Hilo consumidor de Kafka
 def kafka_commands_consumer(broker, cp_id):
