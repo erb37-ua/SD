@@ -98,6 +98,17 @@ services:
       - ../Drivers:/app
     command: ["sleep", "infinity"]
   
+  registry:
+    build:
+      context: ..
+      dockerfile: Deploy/Dockerfile.registry
+    hostname: registry
+    container_name: registry
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../Registry:/app/Registry
+    command: ["8080"]
   
   init-kafka:
     image: apache/kafka:latest
