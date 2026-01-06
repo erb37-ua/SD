@@ -111,6 +111,18 @@ services:
     volumes:
       - ../Registry:/app/Registry
     command: ["8080"]
+
+  ev_w:
+    build:
+      context: ..
+      dockerfile: Deploy/Dockerfile.weather
+    hostname: ev_w
+    container_name: ev_w
+    environment:
+      - CENTRAL_URL=http://central:8000
+    depends_on:
+      central: { condition: service_started }
+    command: ["python", "Weather/EV_W.py"]
   
   init-kafka:
     image: apache/kafka:latest
