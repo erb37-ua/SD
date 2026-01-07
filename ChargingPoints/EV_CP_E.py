@@ -7,10 +7,10 @@ import random
 from confluent_kafka import Producer, Consumer
 from cryptography.fernet import Fernet
 
-# --- CONFIGURACIÓN ---
+# CONFIGURACIÓN
 HEARTBEAT_TIMEOUT = 3.0  # Si en 3 seg no hay latido, asumimos que el driver cerró la ventana
 
-# --- ESTADO GLOBAL ---
+# ESTADO GLOBAL
 cp_id_global = None
 kafka_producer = None
 aes_key = None
@@ -29,7 +29,7 @@ fault_lock = threading.Lock()
 charge_lock = threading.Lock()
 admin_lock = threading.Lock()
 
-# --- GESTIÓN DE SESIONES (Watchdog) ---
+# GESTIÓN DE SESIONES
 active_sessions = {} # { 'driverId': timestamp }
 session_lock = threading.Lock()
 
@@ -51,7 +51,6 @@ def input_thread():
 
 def session_watchdog():
     """ 
-    HILO GUARDIÁN:
     Revisa cada segundo si el driver sigue ahí. Si cierras la terminal del driver,
     este hilo se da cuenta de que falta el latido y corta la carga.
     """
@@ -101,7 +100,7 @@ def charging_thread(driver_id, stop_evt):
 
     # Bucle de carga
     while not stop_evt.is_set():
-        # 1. Chequeo de Avería interna
+        # Chequeo de Avería interna
         with fault_lock:
             if is_faulty:
                 print("[Carga] Abortada por AVERÍA del CP.")
@@ -109,13 +108,12 @@ def charging_thread(driver_id, stop_evt):
                 razon_fin = "Technical Fault"
                 break
         
-        # 2. Espera inteligente (Wait) en vez de Sleep
         # Si el Watchdog activa el evento, el wait retorna True INMEDIATAMENTE.
         if stop_evt.wait(timeout=1.0):
             print("[Carga] Interrumpida (Driver desconectado o parada manual).")
             break
 
-        # 3. Simulación
+        # Simulación
         consumo += random.uniform(0.1, 0.5)
         coste = consumo * 0.50
 
@@ -126,14 +124,14 @@ def charging_thread(driver_id, stop_evt):
         }
         send_kafka('telemetry', msg)
 
-    # --- CIERRE DE CARGA ---
+    # CIERRE DE CARGA
     final_msg = {
         'cpId': cp_id_global, 'driverId': driver_id,
         'status': status_fin, 'reason': razon_fin,
         'final_consumo_kw': round(consumo,3), 'final_importe_eur': round(coste,2)
     }
     
-    # IMPORTANTE: Enviamos el Ticket. 
+    # Enviamos el Ticket. 
     # Al recibir esto, la Central marcará el CP como "Disponible" (Activado) de nuevo.
     send_kafka('tickets', final_msg)
     

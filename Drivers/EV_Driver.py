@@ -4,7 +4,7 @@ import time
 import threading
 from confluent_kafka import Producer, Consumer
 
-# --- EVENTOS DE CONTROL ---
+# EVENTOS DE CONTROL
 session_active_event = threading.Event()  # Controla el envío de Heartbeats (Sesión activa)
 charge_finished_event = threading.Event() # Controla el bucle de espera durante la carga
 
@@ -13,7 +13,7 @@ def delivery_report(err, msg):
     if err is not None:
         print(f"[Kafka] Error envío: {err}")
 
-# --- HILO 1: Heartbeat (Latido constante) ---
+# HILO 1: Heartbeat (Latido constante)
 def heartbeat_sender(producer, driver_id, cp_id):
     """
     Envía un latido cada 2 segundos SIEMPRE que estemos conectados al menú del CP.
@@ -27,7 +27,7 @@ def heartbeat_sender(producer, driver_id, cp_id):
                 'cpId': cp_id,
                 'action': 'HEARTBEAT'
             }
-            # Enviamos y forzamos el 'flush' para que salga de inmediato
+            
             producer.produce('commands', value=json.dumps(hb_data).encode('utf-8'))
             producer.flush() 
             time.sleep(2) 
@@ -36,15 +36,14 @@ def heartbeat_sender(producer, driver_id, cp_id):
             break
     print(f"[{driver_id}] Heartbeat detenido.")
 
-# --- HILO 2: Escucha (Respuestas del CP) ---
+# HILO 2: Escucha (Respuestas del CP)
 def kafka_listener(broker, driver_id, cp_id):
     """
     Escucha Tickets (fin de carga) y Telemetría (para detectar averías).
     """
     consumer = None
     try:
-        # IMPORTANTE: Usamos un group.id único con timestamp para evitar bloqueos
-        # si reiniciamos la terminal muy rápido.
+        # Usamos un group.id único con timestamp para evitar bloqueossi reiniciamos la terminal muy rápido.
         consumer = Consumer({
             'bootstrap.servers': broker,
             'group.id': f'driver_{driver_id}_{int(time.time())}',
@@ -133,16 +132,13 @@ def main():
                     print(f"\n--- Conectado a {current_cp} ---")
                     print("1. Iniciar Carga")
                     print("2. Desconectar (Volver al inicio)")
-                    
-                    # Nota: input() es bloqueante. Si llega un error del CP, 
-                    # se imprimirá, pero el prompt no se refrescará hasta que pulses Enter.
+                
                     opt = input("Opción: ").strip()
 
                     if opt == '1':
                         print(">> Solicitando carga al CP...")
                         charge_finished_event.clear() 
-                        
-                        # Enviar Request
+                    
                         req = {'driverId': driver_id, 'cpId': current_cp}
                         producer.produce('requests', value=json.dumps(req).encode('utf-8'))
                         producer.flush()
