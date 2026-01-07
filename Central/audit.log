@@ -3,3 +3,7 @@
 2026-01-06T21:46:48+0000 | evento=cp_disconnected | ip=172.18.0.7 | accion=cp_id=CP007
 2026-01-06T21:47:01+0000 | evento=cp_connected | ip=172.18.0.7 | accion=cp_id=CP007
 2026-01-06T21:47:51+0000 | evento=cp_connected | ip=172.18.0.1 | accion=cp_id=CP001
+2026-01-07T12:43:51+0000 | evento=cp_connected | ip=172.18.0.1 | accion=cp_id=CP001
+2026-01-07T12:46:36+0000 | evento=critical_error | ip=172.18.0.1 | accion=cp_fault cp_id=CP001
+2026-01-07T12:46:37+0000 | evento=cp_disconnected | ip=172.18.0.1 | accion=cp_id=CP001
+2026-01-07T12:46:50+0000 | evento=cp_connected | ip=172.18.0.1 | accion=cp_id=CP004

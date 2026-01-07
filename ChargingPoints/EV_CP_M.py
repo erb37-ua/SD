@@ -59,6 +59,10 @@ def write_central_key_log(cp_id, aes_key):
         return None
 
 def get_registry_token(registry_url, cp_id, location, verify_ssl):
+    # Aseguramos que la URL está bien formada si el usuario olvidó el esquema
+    if not registry_url.startswith("http"):
+        registry_url = "https://" + registry_url
+        
     url = registry_url.rstrip("/") + "/register"
     try:
         resp = requests.post(
@@ -75,40 +79,69 @@ def get_registry_token(registry_url, cp_id, location, verify_ssl):
             return None
         return token
     except Exception as e:
-        print(f"[{cp_id}] Error registrando en EV_Registry: {e}")
+        print(f"[{cp_id}] Error registrando en EV_Registry ({url}): {e}")
         return None
 
 def main():
+    registry_ip_arg = None # Variable auxiliar para la IP del Registry
+
     # Validar argumentos de línea de comandos
     if len(sys.argv) >= 6:
         central_ip = sys.argv[1]
+        try:
+            central_port = int(sys.argv[2])
+        except ValueError:
+            print("Error: El puerto central debe ser un número entero.")
+            return
         cp_id = sys.argv[3]
         engine_ip = sys.argv[4]
         try:
-            central_port = int(sys.argv[2])
             engine_port = int(sys.argv[5])
         except ValueError:
-            print("Error: Los puertos deben ser números enteros.")
+            print("Error: El puerto engine debe ser un número entero.")
             return
+        
+        # --- NUEVO: CAPTURAR 6º ARGUMENTO (IP REGISTRY) ---
+        if len(sys.argv) >= 7:
+            registry_ip_arg = sys.argv[6]
+
     else:
+        # Fallback a variables de entorno
         central_ip = os.getenv("CENTRAL_HOST")
         cp_id = os.getenv("CP_ID")
         engine_ip = os.getenv("ENGINE_HOST")
         central_port = os.getenv("CENTRAL_PORT")
         engine_port = os.getenv("ENGINE_PORT")
+        registry_ip_arg = os.getenv("REGISTRY_HOST") # Por si se define esta variable
+
         if not all([central_ip, cp_id, engine_ip, central_port, engine_port]):
-            print("Error: Faltan argumentos o variables de entorno.")
-            print("Uso: python EV_CP_M.py <IP_Central> <Puerto_Central> <ID_CP> <IP_Engine> <Puerto_Engine>")
+            print("Error: Faltan argumentos.")
+            print("Uso: python EV_CP_M.py <IP_Central> <Puerto_Central> <ID_CP> <IP_Engine> <Puerto_Engine> [IP_Registry]")
             return
         central_port = int(central_port)
         engine_port = int(engine_port)
 
-    registry_url = os.getenv("REGISTRY_URL", "https://registry:8080")
+    # --- CONFIGURACIÓN URL REGISTRY ---
+    # 1. Leemos variable de entorno por defecto
+    registry_url = os.getenv("REGISTRY_URL", "")
+
+    # 2. Si se ha pasado la IP por argumento (o variable REGISTRY_HOST), TIENE PRIORIDAD
+    if registry_ip_arg:
+        # Asumimos puerto 8080 y https
+        registry_url = f"https://{registry_ip_arg}:8080"
+        print(f"[{cp_id}] Configurado Registry manual en: {registry_url}")
+    
+    # 3. Si sigue vacía, ponemos un default
+    if not registry_url:
+        registry_url = "https://localhost:8080"
+
+    # Resto de configuraciones
     cp_location = os.getenv("CP_LOCATION", "unknown")
     verify_ssl = os.getenv("REGISTRY_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
     cert_path = os.getenv("REGISTRY_CERT_PATH")
     verify_setting = cert_path if cert_path else verify_ssl
 
+    # --- INICIO DEL FLUJO ---
     token = get_registry_token(registry_url, cp_id, cp_location, verify_setting)
     if not token:
         return

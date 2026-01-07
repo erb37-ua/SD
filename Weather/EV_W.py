@@ -1,17 +1,18 @@
-# Weather/EV_W.py
 import time
 import requests
 import sys
 import os
 import json
+import argparse # <--- Importamos la librería para parsear argumentos
 
 # --- CONFIGURACIÓN ---
 # Leemos la API KEY del entorno
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-CENTRAL_URL = os.getenv("CENTRAL_URL", "http://localhost:8000")
+# Variable global que se rellenará con el argumento del parser
+CENTRAL_URL = None 
 
-# Detectar si estamos en Docker o en local
+# Detectar si estamos en Docker o en local para la BBDD
 if os.path.exists("/app/Central/cp_database.json"):
     # Ruta dentro del contenedor Docker
     DB_FILE_PATH = "/app/Central/cp_database.json"
@@ -22,7 +23,7 @@ else:
 
 # Estado interno: { "CP001": "OK", "CP003": "BAD" }
 cp_weather_state = {} 
-cp_locations = {} # Se llenará leyendo el JSON: { "CP001": "Alicante" }
+cp_locations = {} 
 
 def load_cp_locations():
     """Lee el JSON compartido para saber qué ciudad corresponde a cada CP."""
@@ -99,6 +100,7 @@ def send_telemetry(cp_id, temp):
 
 def main():
     print("*** EV_W Iniciado ***")
+    print(f"[Config] Conectando a Central en: {CENTRAL_URL}")
     time.sleep(2) 
     
     while True:
@@ -112,7 +114,7 @@ def main():
 
             temp = get_temperature(city)
             
-            # ENVIAR DATO A CENTRAL (NUEVO)
+            # ENVIAR DATO A CENTRAL
             send_telemetry(cp_id, temp)
 
             state = cp_weather_state.get(cp_id, "OK")
@@ -131,4 +133,17 @@ def main():
         time.sleep(5)
 
 if __name__ == "__main__":
+    # --- USO DE ARGPARSE ---
+    parser = argparse.ArgumentParser(description='EV Weather Module')
+    parser.add_argument('central_host', help='IP o Hostname de la Central (ej: 192.168.1.35)')
+    
+    args = parser.parse_args()
+
+    # Construimos la URL completa basada en el argumento
+    if args.central_host.startswith("http"):
+        CENTRAL_URL = args.central_host
+    else:
+        # Si el usuario solo pone la IP, asumimos puerto 8000 y http
+        CENTRAL_URL = f"http://{args.central_host}:8000"
+
     main()
