@@ -43,10 +43,20 @@
     .cp-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
     .cp-title{font-weight:600;font-size:16px;letter-spacing:0.01em;}
     .pill{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,0.1);}
+    
     .ok{background:rgba(34,197,94,0.12);color:#8ff2b8;border-color:rgba(34,197,94,0.4);}
+    /* CAMBIO 1: El estilo warn lo usaremos para Out of Order */
     .warn{background:rgba(245,158,11,0.12);color:#fbd38d;border-color:rgba(245,158,11,0.4);}
     .bad{background:rgba(239,68,68,0.12);color:#f9a5a5;border-color:rgba(239,68,68,0.4);}
     .idle{background:rgba(255,255,255,0.04);color:var(--muted);}
+
+    /* CAMBIO 2: Estilos para la fila del clima */
+    .weather-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .city-info { font-size: 13px; color: var(--accent-2); display: flex; align-items: center; gap: 6px; }
+    .city-actions { display: flex; gap: 4px; }
+    .input-mini { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 6px; padding: 4px 8px; width: 90px; font-size: 12px; font-family: inherit; }
+    .btn-mini { background: var(--accent); border: 0; color: #fff; border-radius: 6px; padding: 4px 8px; font-size: 11px; cursor: pointer; transition: opacity 0.2s; }
+    .btn-mini:hover { opacity: 0.8; }
 
     .cp-meta{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:10px;}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
@@ -115,7 +125,10 @@
       const s=(state||'').toLowerCase();
       if(s.includes('suministr')) return {cls:'ok', label:'Suministrando'};
       if(s.includes('activ')) return {cls:'ok', label:'Activado'};
-      if(s.includes('parado')) return {cls:'warn', label:'Parado'};
+      
+      // CAMBIO 3: Lógica para mostrar Out of Order si está Parado
+      if(s.includes('parado')) return {cls:'warn', label:'Out of Order'};
+      
       if(s.includes('averi')) return {cls:'bad', label:'Averiado'};
       if(s.includes('desconect')) return {cls:'idle', label:'Desconectado'};
       return {cls:'idle', label:state||'-'};
@@ -125,12 +138,22 @@
       if(cpNodes.has(cpId)) return cpNodes.get(cpId);
       const card=document.createElement('div');
       card.className='card';
+      // CAMBIO 4: Añadido el bloque div class="weather-row" con el input para la ciudad
       card.innerHTML=`
         <div class="card-content">
           <div class="cp-header">
             <span class="cp-title">${cpId}</span>
             <span class="pill idle" data-pill></span>
           </div>
+
+          <div class="weather-row">
+            <div class="city-info"><i class="lucide lucide-cloud"></i> <span data-city>...</span></div>
+            <div class="city-actions">
+                <input type="text" class="input-mini" placeholder="Ciudad" data-city-input>
+                <button class="btn-mini" data-city-set>SET</button>
+            </div>
+          </div>
+
           <div class="cp-meta"><i class="lucide lucide-map-pin"></i> <span data-location>—</span></div>
           <div class="stats">
             <div class="stat">
@@ -152,8 +175,20 @@
             <button class="btn btn-resume" data-resume>Reanudar</button>
           </div>
         </div>`;
+      
       cardsEl.appendChild(card);
       cpNodes.set(cpId, card);
+      
+      // CAMBIO 5: Evento para el botón SET
+      const btnSet = card.querySelector('[data-city-set]');
+      const inputCity = card.querySelector('[data-city-input]');
+      btnSet.onclick = () => {
+          if(inputCity.value.trim()){
+              sendCmd(cpId, 'CITY:' + inputCity.value.trim());
+              inputCity.value = '';
+          }
+      };
+
       return card;
     }
 
@@ -163,6 +198,10 @@
       card.querySelector('[data-driver]').textContent=cp.driver||'—';
       card.querySelector('[data-consumo]').textContent=cp.consumo!=null?`${Number(cp.consumo).toFixed(2)} kWh`:'—';
       card.querySelector('[data-importe]').textContent=cp.importe!=null?`${Number(cp.importe).toFixed(2)} €`:'—';
+      
+      // CAMBIO 6: Actualizar texto de la ciudad
+      const tempStr = (cp.temp !== undefined && cp.temp !== null) ? ` (${cp.temp}ºC)` : '';
+      card.querySelector('[data-city]').textContent = (cp.city || 'Alicante') + tempStr;
 
       const state=cp.state||'—';
       const {cls,label}=stateInfo(state);

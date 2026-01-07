@@ -1,0 +1,44 @@
+[
+  {
+    "id": "CP001",
+    "location": "C/Italia 5",
+    "city": "Alicante",
+    "price": 0.54
+  },
+  {
+    "id": "CP002",
+    "location": "Gran Via 2",
+    "city": "Madrid",
+    "price": 0.54
+  },
+  {
+    "id": "CP003",
+    "location": "C/Serrano 10",
+    "city": "Oslo",
+    "price": 0.6
+  },
+  {
+    "id": "CP004",
+    "location": "C/Mondongo 33",
+    "city": "Sevilla",
+    "price": 0.5
+  },
+  {
+    "id": "CP005",
+    "location": "C/Mario Alarcon 4",
+    "city": "Valencia",
+    "price": 0.61
+  },
+  {
+    "id": "CP006",
+    "location": "C/Ivan 69",
+    "city": "Bilbao",
+    "price": 0.53
+  },
+  {
+    "id": "CP007",
+    "location": "C/Esteban 24",
+    "city": "Barcelona",
+    "price": 0.53
+  }
+]
