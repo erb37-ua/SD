@@ -1,10 +1,12 @@
 confluent_kafka
 pymongo
-fastapi==0.110.*
-uvicorn==0.30.*
-websockets>=11
+fastapi
+uvicorn
+websockets
 requests
 cryptography
 PyJWT
 flask
 flask-cors
+uvicorn
+pydantic
