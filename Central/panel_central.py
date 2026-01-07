@@ -88,6 +88,21 @@ def create_app(
         return {"status": "updated"}
 
     # WEBSOCKETS
+    @app.get("/management/status")
+    async def management_status():
+        state = state_getter()
+        summary = {}
+        for cp in state.values():
+            st = cp.get("state", "UNKNOWN")
+            summary[st] = summary.get(st, 0) + 1
+        return {"total": len(state), "by_state": summary, "cp_ids": sorted(state.keys())}
+
+    @app.post("/clima")
+    async def clima(payload: Dict[str, Any]):
+        if climate_handler is None:
+            return {"ok": False, "error": "climate_handler_not_configured"}
+        return climate_handler(payload)
+    
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         await ws.accept()
