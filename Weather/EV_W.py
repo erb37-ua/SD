@@ -1,4 +1,3 @@
-# Weather/EV_W.py
 import time
 import requests
 import sys
@@ -6,23 +5,17 @@ import os
 import json
 
 # --- CONFIGURACIÓN ---
-# Leemos la API KEY del entorno
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 CENTRAL_URL = os.getenv("CENTRAL_URL", "http://localhost:8000")
 
-# Detectar si estamos en Docker o en local
 if os.path.exists("/app/Central/cp_database.json"):
-    # Ruta dentro del contenedor Docker
     DB_FILE_PATH = "/app/Central/cp_database.json"
 else:
-    # Ruta relativa para ejecución local en Windows
-    # Asume que ejecutas desde la carpeta Weather/
     DB_FILE_PATH = "../Central/cp_database.json"
 
-# Estado interno: { "CP001": "OK", "CP003": "BAD" }
 cp_weather_state = {} 
-cp_locations = {} # Se llenará leyendo el JSON: { "CP001": "Alicante" }
+cp_locations = {}
 
 def load_cp_locations():
     """Lee el JSON compartido para saber qué ciudad corresponde a cada CP."""
@@ -36,7 +29,6 @@ def load_cp_locations():
         with open(DB_FILE_PATH, 'r') as f:
             data = json.load(f)
             for item in data:
-                # Extraemos ID y Ciudad
                 cp_id = item.get("id")
                 city = item.get("city", "Alicante")
                 if cp_id:
@@ -48,7 +40,6 @@ def load_cp_locations():
 def get_temperature(city):
     """Obtiene temperatura de OpenWeatherMap o simula si no hay API Key."""
     
-    # MODO SIMULACIÓN (Si no pusiste clave en el .env)
     if not OPENWEATHER_API_KEY:
         if "Oslo" in city: return -5.0
         return 22.0
@@ -63,7 +54,6 @@ def get_temperature(city):
     except Exception as e:
         print(f"[Net Error] {e}")
     
-    # Fallback si falla internet
     return -5.0 if "Oslo" in city else 20.0
 
 def notify_central(cp_id, action):
@@ -74,7 +64,7 @@ def notify_central(cp_id, action):
         "reason": "Weather Alert" if action == "STOP" else "Weather OK"
     }
     
-    print(f"   [Intento] Contactando Central: {url} ...") # Debug
+    print(f"   [Intento] Contactando Central: {url} ...") 
     
     try:
         r = requests.post(url, json=payload, timeout=5)
@@ -95,7 +85,7 @@ def send_telemetry(cp_id, temp):
     try:
         requests.post(url, json={"cp_id": cp_id, "temperature": temp}, timeout=2)
     except Exception:
-        pass # Ignoramos errores de telemetría para no ensuciar el log
+        pass 
 
 def main():
     print("*** EV_W Iniciado ***")
@@ -112,7 +102,6 @@ def main():
 
             temp = get_temperature(city)
             
-            # ENVIAR DATO A CENTRAL (NUEVO)
             send_telemetry(cp_id, temp)
 
             state = cp_weather_state.get(cp_id, "OK")

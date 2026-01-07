@@ -1,4 +1,3 @@
-# Registry/EV_Registry.py
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -8,7 +7,6 @@ import sys
 import os
 import time
 
-# Definimos el modelo de datos que esperamos recibir del CP
 class CPRegisterRequest(BaseModel):
     cp_id: str
     location: str
@@ -16,8 +14,6 @@ class CPRegisterRequest(BaseModel):
 JWT_SECRET = os.getenv("REGISTRY_JWT_SECRET", "dev_registry_secret")
 JWT_ALG = "HS256"
 
-# Almacén en memoria de los CPs registrados
-# Formato: { "CP001": {"location": "...", "token": "..."} }
 registered_cps = {}
 
 app = FastAPI(title="EV Registry Service")
@@ -43,7 +39,6 @@ def register_cp(request: CPRegisterRequest):
     if isinstance(token, bytes):
         token = token.decode("utf-8")
     
-    # Guardamos el CP y su token "en la base de datos" (memoria)
     registered_cps[cp_id] = {
         "location": request.location,
         "token": token
@@ -51,7 +46,6 @@ def register_cp(request: CPRegisterRequest):
     
     print(f"[REGISTRY] Nuevo registro: {cp_id} en {request.location}. Token generado.")
     
-    # Devolvemos el token al CP
     return {"status": "registered", "token": token}
 
 @app.get("/check/{cp_id}")
@@ -65,9 +59,8 @@ def check_cp(cp_id: str):
         raise HTTPException(status_code=404, detail="CP not found")
 
 def main():
-    # Argumentos por línea de comandos para el puerto (igual que tus otros scripts)
     if len(sys.argv) < 2:
-        port = 8080 # Puerto por defecto si no se pasa argumento
+        port = 8080 
     else:
         port = int(sys.argv[1])
 
@@ -78,11 +71,9 @@ def main():
 
     if not os.path.exists(cert_path):
         print(f"[ERROR] No encuentro el certificado en: {cert_path}")
-        # Listar archivos para ver qué pasa
         print(f"Archivos en {base_dir}: {os.listdir(base_dir)}")
         return
     
-    # Iniciamos uvicorn con SSL habilitado
     uvicorn.run(
         app, 
         host="0.0.0.0", 

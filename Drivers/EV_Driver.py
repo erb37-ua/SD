@@ -4,7 +4,6 @@ import time
 import threading
 from confluent_kafka import Producer, Consumer
 
-# --- EVENTOS DE CONTROL ---
 session_active_event = threading.Event()  # Controla el envío de Heartbeats (Sesión activa)
 charge_finished_event = threading.Event() # Controla el bucle de espera durante la carga
 
@@ -13,7 +12,7 @@ def delivery_report(err, msg):
     if err is not None:
         print(f"[Kafka] Error envío: {err}")
 
-# --- HILO 1: Heartbeat (Latido constante) ---
+# --- Heartbeat  ---
 def heartbeat_sender(producer, driver_id, cp_id):
     """
     Envía un latido cada 2 segundos SIEMPRE que estemos conectados al menú del CP.
@@ -27,7 +26,6 @@ def heartbeat_sender(producer, driver_id, cp_id):
                 'cpId': cp_id,
                 'action': 'HEARTBEAT'
             }
-            # Enviamos y forzamos el 'flush' para que salga de inmediato
             producer.produce('commands', value=json.dumps(hb_data).encode('utf-8'))
             producer.flush() 
             time.sleep(2) 
@@ -36,15 +34,13 @@ def heartbeat_sender(producer, driver_id, cp_id):
             break
     print(f"[{driver_id}] Heartbeat detenido.")
 
-# --- HILO 2: Escucha (Respuestas del CP) ---
+# --- Escucha ---
 def kafka_listener(broker, driver_id, cp_id):
     """
     Escucha Tickets (fin de carga) y Telemetría (para detectar averías).
     """
     consumer = None
     try:
-        # IMPORTANTE: Usamos un group.id único con timestamp para evitar bloqueos
-        # si reiniciamos la terminal muy rápido.
         consumer = Consumer({
             'bootstrap.servers': broker,
             'group.id': f'driver_{driver_id}_{int(time.time())}',
@@ -59,20 +55,16 @@ def kafka_listener(broker, driver_id, cp_id):
             try:
                 data = json.loads(msg.value().decode('utf-8'))
                 
-                # Ignorar mensajes de otros CPs
                 if data.get('cpId') != cp_id: continue
 
                 topic = msg.topic()
 
-                # CASO A: El CP reporta una AVERÍA o ERROR
                 if topic == 'telemetry':
                     if data.get('status') == 'ERROR':
                         print(f"\n\n[ALERTA] El CP reporta ERROR: {data.get('reason')}")
                         print("Deteniendo carga...")
-                        # Desbloqueamos el hilo principal si estaba esperando
                         charge_finished_event.set()
 
-                # CASO B: Recibimos un TICKET (Fin de carga normal)
                 elif topic == 'tickets' and data.get('driverId') == driver_id:
                     print(f"\n\n--- TICKET FINAL ---")
                     print(f"  Estado: {data.get('status')}")
@@ -102,7 +94,6 @@ def main():
     broker = sys.argv[1]
     driver_id = sys.argv[2]
     
-    # Productor para enviar comandos
     producer = Producer({'bootstrap.servers': broker})
 
     try:
@@ -116,9 +107,6 @@ def main():
             
             current_cp = cp_input
             
-            # 1. ACTIVAR SESIÓN
-            # Esto arranca los latidos. Si cierras la terminal ahora, 
-            # el latido parará y el CP se enterará.
             session_active_event.set() 
             
             t_hb = threading.Thread(target=heartbeat_sender, args=(producer, driver_id, current_cp))
@@ -127,29 +115,24 @@ def main():
             t_hb.start()
             t_li.start()
 
-            # 2. MENÚ DE CONEXIÓN
             try:
                 while session_active_event.is_set():
                     print(f"\n--- Conectado a {current_cp} ---")
                     print("1. Iniciar Carga")
                     print("2. Desconectar (Volver al inicio)")
                     
-                    # Nota: input() es bloqueante. Si llega un error del CP, 
-                    # se imprimirá, pero el prompt no se refrescará hasta que pulses Enter.
                     opt = input("Opción: ").strip()
 
                     if opt == '1':
                         print(">> Solicitando carga al CP...")
                         charge_finished_event.clear() 
                         
-                        # Enviar Request
                         req = {'driverId': driver_id, 'cpId': current_cp}
                         producer.produce('requests', value=json.dumps(req).encode('utf-8'))
                         producer.flush()
                         
                         print(">> Esperando carga... (Ctrl+C para Emergencia)")
                         
-                        # Bucle de espera no bloqueante para poder recibir señales de stop
                         try:
                             while not charge_finished_event.is_set():
                                 time.sleep(0.5)
@@ -157,18 +140,16 @@ def main():
                         except KeyboardInterrupt:
                             print("\n[!] ENVIANDO PARADA DE EMERGENCIA...")
                             send_command(producer, driver_id, current_cp, 'STOP')
-                            # Esperamos un poco para recibir el ticket
                             time.sleep(2)
                         
                     elif opt == '2':
                         print("Desconectando...")
-                        session_active_event.clear() # Rompe el bucle y para los hilos
+                        session_active_event.clear() 
                         break
             except KeyboardInterrupt:
                 print("\nInterrupción detectada, saliendo al menú principal...")
                 session_active_event.clear()
 
-            # Asegurar limpieza de hilos antes de volver a empezar
             t_hb.join(timeout=1)
             t_li.join(timeout=1)
 

@@ -262,7 +262,6 @@
 
     function render(snapshot){
       const ids=Object.keys(snapshot||{}).sort();
-      // remove cards that disappeared
       for(const existing of Array.from(cpNodes.keys())){
         if(!ids.includes(existing)){
           cpNodes.get(existing).remove();

@@ -13,15 +13,12 @@ from threading import Thread
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
 
-
-# Colores
 VERDE = '\033[92m'
 NARANJA = '\033[38;5;208m'
 ROJO = '\033[91m'
 GRIS = '\033[90m'
 RESET = '\033[0m'
 
-# Estado CPs
 charging_points = {}
 cp_aes_keys = {}
 keys_lock = threading.Lock()
@@ -29,18 +26,14 @@ keys_lock = threading.Lock()
 JWT_SECRET = os.getenv("REGISTRY_JWT_SECRET", "dev_registry_secret")
 JWT_ALG = "HS256"
 
-# Kafka consumers se ejecutan en hilos
 db_lock = threading.Lock()
 audit_lock = threading.Lock()
 
-# Kafka producer global
 kafka_producer = None
 
-# Eventos para parada limpia
-stop_event_threads = threading.Event()   # para hilos
-stop_event_async = None                  # será asyncio.Event()
+stop_event_threads = threading.Event() 
+stop_event_async = None 
 
-# Estructura para la cola
 pending_requests = []
 
 def log_audit(evento, ip, accion):
@@ -65,18 +58,15 @@ def get_state_snapshot():
     Devuelve una copia segura del estado de los CPs para el panel web.
     """
     with db_lock:
-        # copia superficial de dicts (suficiente para lectura)
         return {cp_id: dict(data) for cp_id, data in charging_points.items()}
 
-# Funciones de BD / panel
-def load_database(filename="cp_database.json"): # <--- Cambiado a .json
+def load_database(filename="cp_database.json"):
     """
     Carga los CPs desde un archivo JSON.
     Estructura esperada: [{"id":"CP001", "location":"...", "city":"...", "price":0.5}, ...]
     """
     print(f"[Info] Cargando base de datos de CPs desde {filename}...")
     try:
-        # Aseguramos ruta absoluta si es necesario, o confiamos en el workdir
         if not os.path.exists(filename):
             print(f"[Error] No se encontró {filename}. Empezando con 0 CPs.")
             return
@@ -90,7 +80,7 @@ def load_database(filename="cp_database.json"): # <--- Cambiado a .json
                     if cp_id:
                         charging_points[cp_id] = {
                             "location": item.get("location", "Desconocida"),
-                            "city": item.get("city", "Alicante"), # Guardamos la ciudad también
+                            "city": item.get("city", "Alicante"),
                             "price": item.get("price", 0.50),
                             "state": "DESCONECTADO",
                             "driver": None,
@@ -113,11 +103,10 @@ def save_database(filename="cp_database.json"):
         data_list = []
         with db_lock:
             for cp_id, data in charging_points.items():
-                # Reconstruimos el objeto para guardar
                 item = {
                     "id": cp_id,
                     "location": data["location"],
-                    "city": data.get("city", "Alicante"), # Guardamos la ciudad
+                    "city": data.get("city", "Alicante"),
                     "price": data["price"]
                 }
                 data_list.append(item)
@@ -170,10 +159,8 @@ async def display_panel():
 
         print("--- APLICATION MESSAGES ---")
         print("CENTRAL system status OK")
-        # esperar 2 segundos
         await asyncio.sleep(2)
 
-# Hilo para leer comandos de administrador (stop/resume)
 def admin_input_thread(stop_evt: threading.Event):
     """
     Un hilo separado que bloquea en input() para recibir comandos
@@ -184,7 +171,6 @@ def admin_input_thread(stop_evt: threading.Event):
     
     while not stop_evt.is_set():
         try:
-            # Esta línea se bloqueará, esperando la entrada del usuario
             command_line = input() 
             
             if stop_evt.is_set():
@@ -199,28 +185,25 @@ def admin_input_thread(stop_evt: threading.Event):
                 print(f"{ROJO}[Admin] Error: Se requiere un comando y un cp_id (ej: stop CP001){RESET}")
                 continue
                 
-            cp_id = parts[1].upper() # Estandarizar a mayúsculas
+            cp_id = parts[1].upper()
             
             if cmd == 'stop':
-                # Enviar comando de Parada
                 print(f"[Admin] Procesando comando STOP para {cp_id}...")
                 process_admin_command(cp_id, "STOP", "Parado")
             elif cmd == 'resume':
-                # Enviar comando de Reanudación
                 print(f"[Admin] Procesando comando RESUME para {cp_id}...")
                 process_admin_command(cp_id, "RESUME", "Activado")
             else:
                 print(f"{ROJO}[Admin] Comando '{cmd}' no reconocido. Use 'stop' o 'resume'.{RESET}")
                 
         except EOFError:
-            break # Salir si se pulsa Ctrl+D
+            break
         except Exception as e:
             if not stop_evt.is_set():
                 print(f"{ROJO}[Admin] Error en hilo de input: {e}{RESET}")
             
     print("[Admin] Hilo de input detenido.")
 
-# Función de ayuda para procesar los comandos de admin
 def process_admin_command(cp_id: str, kafka_action: str, db_state: str):
     """
     Actualiza el estado del CP en la BD local y envía el comando
@@ -238,14 +221,12 @@ def process_admin_command(cp_id: str, kafka_action: str, db_state: str):
             print(f"[Admin] IGNORADO: '{cp_id}' está DESCONECTADO. No se envía comando.")
             return {"ok": False, "error": f"CP '{cp_id}' no está conectado"}
             
-        # Actualizar el estado local inmediatamente, el panel lo mostrará en el siguiente refresco
         charging_points[cp_id]['state'] = db_state
         print(f"[Admin] Estado local de '{cp_id}' actualizado a: {db_state}")
 
-    # Enviar el comando por Kafka al CP (Engine)
     command_message = {
         'cpId': cp_id, 
-        'action': kafka_action # "STOP" o "RESUME"
+        'action': kafka_action
     }
     send_kafka_message('commands', command_message)
     print(f"[Admin] Comando '{kafka_action}' enviado a Kafka para {cp_id}.")
@@ -261,21 +242,17 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
     try:
         while not stop_event_async.is_set():
-            # intentar leer una línea, si no hay newline, hacer read
             try:
                 linea = await asyncio.wait_for(reader.readline(), timeout=1.0)
             except asyncio.TimeoutError:
-                # timeout para permitir comprobar stop_event_async periódicamente
                 continue
 
             if not linea:
                 print(f"[Desconexión] Cliente {addr} se ha desconectado.")
                 break
 
-            # Decodificar y procesar
             message = linea.decode('utf-8').rstrip('\n').rstrip('\r')
             if not message:
-                # si viene vacío, continuar
                 continue
 
             parts = message.split('#')
@@ -305,7 +282,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                             response = f"NACK: TOKEN_INVALID ({reason})"
                             log_audit("critical_error", client_ip, f"registro_fallido cp_id={cp_id}")
                     else:
-                        # Si no está en la BD, lo rechazamos
                         print(f"[Registro] RECHAZADO: CP '{cp_id}' no se encontró en la base de datos.")
                         response = "NACK: CP DESCONOCIDO"
             elif parts[0] == "REGISTER" and len(parts) == 2:
@@ -345,7 +321,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 print(f"[Mensaje] Mensaje no reconocido de {addr}: {message}")
                 response = "NACK: Mensaje no reconocido"
 
-            # Enviar respuesta
             writer.write((response + "\n").encode('utf-8'))
             await writer.drain()
 
@@ -360,11 +335,8 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         if cp_id_conectado:
             with db_lock:
                 if cp_id_conectado in charging_points:
-                    # Obtenemos el estado actual
                     current_state = charging_points[cp_id_conectado]['state']
 
-                    # Solo cambiamos a DESCONECTADO si el estado NO es "Suministrando" o "Parado".
-                    # Si era "Activado" o "Averiado", debe pasar a "Desconectado".
                     if current_state != "Suministrando" and current_state != "Parado":
                         charging_points[cp_id_conectado]['state'] = "DESCONECTADO"
                         print(f"[Estado] CP '{cp_id_conectado}' (estado anterior: {current_state}) pasa a DESCONECTADO.")
@@ -390,7 +362,7 @@ def send_kafka_message(topic, message_data):
     try:
         payload = json.dumps(message_data).encode('utf-8')
         kafka_producer.produce(topic, value=payload)
-        kafka_producer.poll(0)  # no bloquear
+        kafka_producer.poll(0)
     except Exception as e:
         print(f"[Error Kafka Produce] No se pudo enviar a {topic}: {e}")
 
@@ -440,17 +412,14 @@ def kafka_requests_consumer(broker, stop_evt: threading.Event):
 
                 if cp:
                     if cp['state'] == 'Activado':
-                        # CP Libre: Autorizar
-                        cp['state'] = 'Ocupado_temporal' # Marcamos temporalmente para evitar doble asignación rápida
+                        cp['state'] = 'Ocupado_temporal'
                         auth_message = {'cpId': cp_id, 'driverId': driver_id, 'action': 'AUTHORIZE'}
                         send_kafka_message('commands', auth_message)
                         print(f"[Central] Autorizando inmediatamente a {driver_id} en {cp_id}")
                     elif cp['state'] == 'Suministrando':
-                        # CP Ocupado: A la cola
                         print(f"[Central] CP {cp_id} ocupado. Añadiendo {driver_id} a la cola.")
                         pending_requests.append(request)
                     else:
-                        # Averiado o Desconectado: Rechazar
                         reason = "CP Averiado/Desconectado"
                         ticket_message = {'driverId': driver_id, 'cpId': cp_id, 'status': 'REJECTED', 'reason': reason}
                         send_kafka_message('tickets', ticket_message)
@@ -487,7 +456,7 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
             while not stop_evt.is_set():
                 msg = consumer.poll(1.0)
                 if msg is None: continue
-                if msg.error(): continue # Gestión de errores simplificada para el ejemplo
+                if msg.error(): continue
 
                 try:
                     raw_payload = json.loads(msg.value().decode('utf-8'))
@@ -516,13 +485,9 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                 with db_lock:
                     if cp_id not in charging_points: continue
 
-                    # --- CORRECCIÓN AQUÍ ---
                     current_db_state = charging_points[cp_id]['state']
 
                     if status == 'CHARGING':
-                        # PROTECCIÓN CONTRA RACE CONDITION:
-                        # Si por socket ya nos han dicho que está AVERIADO, ignoramos este mensaje
-                        # de "Cargando" que puede venir con retraso.
                         if current_db_state == "Averiado":
                             continue
 
@@ -567,10 +532,8 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                         charging_points[cp_id]['consumo'] = 0.0
                         charging_points[cp_id]['importe'] = 0.0
 
-                    # --- NUEVA GESTIÓN DE ERROR ---
                     elif status == 'ERROR':
                         print(f"[Kafka Telemetry] Recibido ERROR técnico de {cp_id}")
-                        # Forzamos el estado a Averiado y limpiamos el driver
                         charging_points[cp_id]['state'] = "Averiado"
                         charging_points[cp_id]['driver'] = None
                         charging_points[cp_id]['consumo'] = 0.0
@@ -594,13 +557,11 @@ def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
             with db_lock:
                 if cp_id in charging_points:
                     charging_points[cp_id]['city'] = new_city
-                    # Reseteamos temperatura visualmente hasta que llegue el nuevo dato
                     charging_points[cp_id]['temp'] = None 
             save_database() 
         else:
             process_admin_command(cp_id, action, "Parado" if action == "STOP" else "Activado")
 
-    # NUEVA FUNCIÓN PARA ACTUALIZAR TEMPERATURA
     def handle_weather_update(cp_id, temp):
         with db_lock:
             if cp_id in charging_points:
@@ -609,10 +570,9 @@ def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
     app = create_app(
         state_getter=get_state_snapshot,
         command_sender=handle_web_command,
-        weather_updater=handle_weather_update # <-- Pasamos el callback aquí
+        weather_updater=handle_weather_update
     )
 
-    # Montar estáticos (Central/web)
     from fastapi.staticfiles import StaticFiles
     web_dir = os.path.join(os.path.dirname(__file__), "web")
     if os.path.isdir(web_dir):
@@ -634,10 +594,8 @@ async def main_async(listen_port: int, kafka_broker: str):
 
     stop_event_async = asyncio.Event()
 
-    # Cargar DB
     load_database()
 
-    # Inicializar Kafka producer
     try:
         kafka_producer = Producer({'bootstrap.servers': kafka_broker})
         print(f"[Kafka] Productor conectado a {kafka_broker}")
@@ -645,16 +603,13 @@ async def main_async(listen_port: int, kafka_broker: str):
         print(f"[Error Kafka] No se pudo conectar el Productor: {e}")
         return
 
-    # Lanzar panel
     panel_task = asyncio.create_task(display_panel())
 
-    # Lanzar panel web (hilo separado con uvicorn)
     try:
         start_web_panel(http_host="0.0.0.0", http_port=8000, kafka_broker=kafka_broker)
     except Exception as e:
         print(f"[WEB] Error al iniciar el panel web: {e}")
 
-    # Lanzar consumidores Kafka en hilos
     req_thread = threading.Thread(target=kafka_requests_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
     tel_thread = threading.Thread(target=kafka_telemetry_consumer, args=(kafka_broker, stop_event_threads), daemon=True)
     admin_thread = threading.Thread(target=admin_input_thread, args=(stop_event_threads,), daemon=True)
@@ -662,20 +617,17 @@ async def main_async(listen_port: int, kafka_broker: str):
     tel_thread.start()
     admin_thread.start()
 
-    # Iniciar servidor TCP asíncrono
     server = await asyncio.start_server(handle_client, '0.0.0.0', listen_port, reuse_address=True, backlog=16)
     addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
     print(f"\n*** EV_Central iniciada ***")
     print(f"Escuchando Sockets en: {addrs}")
     print("El panel de control se está mostrando. Esperando conexiones...")
 
-    # Registrar manejadores de señal
     loop = asyncio.get_running_loop()
 
     def _signal_handler():
         print("[SINAL] Señal de parada recibida. Iniciando apagado limpio...")
-        stop_event_threads.set()   # para hilos
-        # set asyncio event desde hilo/handler
+        stop_event_threads.set() 
         loop.call_soon_threadsafe(stop_event_async.set)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -690,13 +642,11 @@ async def main_async(listen_port: int, kafka_broker: str):
         server.close()
         await server.wait_closed()
 
-    # Esperar tareas y cerrar hilos Kafka
     print("[MAIN] Esperando a que los hilos Kafka terminen...")
     stop_event_threads.set()
     req_thread.join(timeout=5)
     tel_thread.join(timeout=5)
 
-    # Cancelar panel si sigue vivo
     if not panel_task.done():
         panel_task.cancel()
         try:
@@ -704,7 +654,6 @@ async def main_async(listen_port: int, kafka_broker: str):
         except asyncio.CancelledError:
             pass
 
-    # Vaciar productor Kafka
     try:
         kafka_producer.flush(timeout=10)
     except Exception as e:

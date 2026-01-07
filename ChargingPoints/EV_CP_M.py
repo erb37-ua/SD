@@ -9,13 +9,11 @@ def connect_to_engine(engine_ip, engine_port):
     Función de ayuda para reconectar al Engine
     """
     try:
-        # Crear un nuevo socket para el Engine
         engine_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         engine_socket.connect((engine_ip, engine_port))
         print(f"[Monitor] Conectado al Engine en {engine_ip}:{engine_port}")
         return engine_socket
     except socket.error:
-        # No imprimimos error aquí, la lógica principal ya lo hace
         return None
 
 def send_key_to_engine(engine_socket, aes_key):
@@ -79,7 +77,6 @@ def get_registry_token(registry_url, cp_id, location, verify_ssl):
         return None
 
 def main():
-    # Validar argumentos de línea de comandos
     if len(sys.argv) >= 6:
         central_ip = sys.argv[1]
         cp_id = sys.argv[3]
@@ -116,19 +113,16 @@ def main():
     if token_log_path:
         print(f"[{cp_id}] Token guardado en {token_log_path}")
 
-    # Socket 1: Conexión con EV_Central
     try:
         central_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         print(f"[{cp_id}] Conectando a EV_Central en {central_ip}:{central_port}...")
         central_socket.connect((central_ip, central_port))
         print(f"[{cp_id}] ¡Conectado a CENTRAL!")
 
-        # Enviar mensaje de registro
         message = f"REGISTER#{cp_id}#{token}\n"
         print(f"[{cp_id}] Enviando registro a CENTRAL (token oculto).")
         central_socket.sendall(message.encode('utf-8'))
 
-        # Esperar respuesta (ACK) del servidor
         response_data = central_socket.recv(1024).decode("utf-8").strip()
         display_response = response_data
         if response_data.startswith("ACK#KEY#"):
@@ -143,16 +137,15 @@ def main():
             print(f"[{cp_id}] Registro rechazado o sin clave AES.")
             return
 
-        # Socket 2: Conexión con EV_CP_E (Engine)
         engine_socket = connect_to_engine(engine_ip, engine_port)
         if engine_socket:
             if not send_key_to_engine(engine_socket, aes_key):
                 print(f"[{cp_id}] No se pudo enviar la clave AES al Engine.")
         
-        last_reported_status = "" # Para evitar enviar mensajes redundantes
+        last_reported_status = "" 
         
         while True:
-            health_status = "KO" # Asumimos KO por defecto
+            health_status = "KO"
 
             if engine_socket:
                 try:
@@ -175,7 +168,6 @@ def main():
                     send_key_to_engine(engine_socket, aes_key)
                 health_status = "KO"
 
-            # Reportar estado a la CENTRAL (solo si cambia)
             try:
                 if health_status != last_reported_status:
                     if health_status == "KO":
@@ -185,7 +177,7 @@ def main():
                     
                     central_socket.sendall(message.encode('utf-8'))
                     
-                    central_socket.recv(1024) # Esperar ACK
+                    central_socket.recv(1024)
                     last_reported_status = health_status
 
             except socket.error:
@@ -199,7 +191,6 @@ def main():
     except KeyboardInterrupt:
         print(f"\n[{cp_id}] Desconectando...")
     finally:
-        # Cerrar ambos sockets
         print(f"[{cp_id}] Cerrando conexiones.")
         if 'central_socket' in locals():
             central_socket.close()
