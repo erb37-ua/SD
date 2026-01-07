@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates tini && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir confluent-kafka
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 RUN useradd -m appuser
 USER appuser

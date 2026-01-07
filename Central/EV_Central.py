@@ -10,6 +10,8 @@ import time
 from confluent_kafka import Producer, Consumer, KafkaError
 import uvicorn
 from threading import Thread
+import jwt
+from cryptography.fernet import Fernet, InvalidToken
 
 
 # Colores
@@ -21,9 +23,15 @@ RESET = '\033[0m'
 
 # Estado CPs
 charging_points = {}
+cp_aes_keys = {}
+keys_lock = threading.Lock()
+
+JWT_SECRET = os.getenv("REGISTRY_JWT_SECRET", "dev_registry_secret")
+JWT_ALG = "HS256"
 
 # Kafka consumers se ejecutan en hilos
 db_lock = threading.Lock()
+audit_lock = threading.Lock()
 
 # Kafka producer global
 kafka_producer = None
@@ -34,6 +42,23 @@ stop_event_async = None                  # será asyncio.Event()
 
 # Estructura para la cola
 pending_requests = []
+
+def log_audit(evento, ip, accion):
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    line = f"{timestamp} | evento={evento} | ip={ip} | accion={accion}\n"
+    audit_path = os.path.join(os.path.dirname(__file__), "audit.log")
+    with audit_lock:
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(line)
+
+def validate_jwt(token, cp_id):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.PyJWTError as exc:
+        return False, f"jwt_error:{exc}"
+    if payload.get("cp_id") != cp_id:
+        return False, "cp_id_mismatch"
+    return True, payload
 
 def get_state_snapshot():
     """
@@ -232,6 +257,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     print(f"\n[Nueva Conexión] Recibida conexión de: {addr}")
 
     cp_id_conectado = None
+    client_ip = addr[0] if addr else "unknown"
 
     try:
         while not stop_event_async.is_set():
@@ -252,23 +278,38 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 # si viene vacío, continuar
                 continue
 
-            print(f"[RX] {addr}: {message}")
             parts = message.split('#')
+            display_message = message
+            if parts[0] == "REGISTER" and len(parts) >= 3:
+                display_message = f"{parts[0]}#{parts[1]}#<token>"
+            print(f"[RX] {addr}: {display_message}")
             response = "ACK"
 
-            if parts[0] == "REGISTER" and len(parts) >= 2:
+            if parts[0] == "REGISTER" and len(parts) >= 3:
                 cp_id = parts[1]
+                token = parts[2]
                 cp_id_conectado = cp_id
                 
                 with db_lock:
                     if cp_id in charging_points:
-                        charging_points[cp_id]['state'] = "Activado"
-                        print(f"[Registro] CP '{cp_id}' (desde BD) se ha activado.")
-                        response = "ACK: Registrado y Activado"
+                        ok, reason = validate_jwt(token, cp_id)
+                        if ok:
+                            charging_points[cp_id]['state'] = "Activado"
+                            print(f"[Registro] CP '{cp_id}' (desde BD) se ha activado.")
+                            aes_key = Fernet.generate_key()
+                            with keys_lock:
+                                cp_aes_keys[cp_id] = aes_key
+                            response = f"ACK#KEY#{aes_key.decode('utf-8')}"
+                            log_audit("cp_connected", client_ip, f"cp_id={cp_id}")
+                        else:
+                            response = f"NACK: TOKEN_INVALID ({reason})"
+                            log_audit("critical_error", client_ip, f"registro_fallido cp_id={cp_id}")
                     else:
                         # Si no está en la BD, lo rechazamos
                         print(f"[Registro] RECHAZADO: CP '{cp_id}' no se encontró en la base de datos.")
                         response = "NACK: CP DESCONOCIDO"
+            elif parts[0] == "REGISTER" and len(parts) == 2:
+                response = "NACK: TOKEN_REQUERIDO"
 
             elif parts[0] == "FAULT" and len(parts) >= 2:
                 cp_id = parts[1]
@@ -279,6 +320,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         if charging_points[cp_id]['state'] != "Averiado":
                             charging_points[cp_id]['state'] = "Averiado"
                             print(f"[Avería] CP '{cp_id}' ha reportado una avería.")
+                            log_audit("critical_error", client_ip, f"cp_fault cp_id={cp_id}")
                 response = "ACK: FAULT Recibido"
 
             elif parts[0] == "HEALTHY" and len(parts) >= 2:
@@ -309,8 +351,10 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
     except (asyncio.IncompleteReadError, ConnectionResetError):
         print(f"[Info] Conexión con {addr} perdida o cerrada.")
+        log_audit("critical_error", client_ip, "socket_disconnected_unexpected")
     except Exception as e:
         print(f"[Error] Excepción en handle_client: {e}")
+        log_audit("critical_error", client_ip, f"socket_exception {e}")
 
     finally:
         if cp_id_conectado:
@@ -326,6 +370,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         print(f"[Estado] CP '{cp_id_conectado}' (estado anterior: {current_state}) pasa a DESCONECTADO.")
                     else:
                         print(f"[Estado] CP '{cp_id_conectado}' desconectado, pero se mantiene estado {current_state}.")
+            with keys_lock:
+                cp_aes_keys.pop(cp_id_conectado, None)
+            log_audit("cp_disconnected", client_ip, f"cp_id={cp_id_conectado}")
         try:
             writer.close()
             await writer.wait_closed()
@@ -443,8 +490,25 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                 if msg.error(): continue # Gestión de errores simplificada para el ejemplo
 
                 try:
-                    telemetry = json.loads(msg.value().decode('utf-8'))
-                except Exception: continue
+                    raw_payload = json.loads(msg.value().decode('utf-8'))
+                except Exception:
+                    continue
+
+                telemetry = raw_payload
+                if isinstance(raw_payload, dict) and "ciphertext" in raw_payload:
+                    cp_id = raw_payload.get("cpId")
+                    with keys_lock:
+                        key = cp_aes_keys.get(cp_id)
+                    if not key:
+                        log_audit("critical_error", "unknown", f"telemetry_key_missing cp_id={cp_id}")
+                        continue
+                    f = Fernet(key)
+                    try:
+                        decrypted = f.decrypt(raw_payload["ciphertext"].encode("utf-8"))
+                        telemetry = json.loads(decrypted.decode("utf-8"))
+                    except (InvalidToken, json.JSONDecodeError) as e:
+                        log_audit("critical_error", "unknown", f"telemetry_decrypt_failed cp_id={cp_id} err={e}")
+                        continue
 
                 cp_id = telemetry.get('cpId')
                 status = telemetry.get('status')
@@ -511,6 +575,7 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                         charging_points[cp_id]['driver'] = None
                         charging_points[cp_id]['consumo'] = 0.0
                         charging_points[cp_id]['importe'] = 0.0
+                        log_audit("critical_error", "unknown", f"telemetry_error cp_id={cp_id}")
 
         except Exception as e:
             print(f"[Error] Excepción en telemetry: {e}")

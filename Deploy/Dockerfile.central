@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates tini && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir confluent-kafka
-RUN pip install --no-cache-dir fastapi==0.110.* uvicorn==0.30.* websockets
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Código dentro de /app/Central (si no lo montas por volumen, esto lo deja dentro de la imagen)
 COPY Central /app/Central
