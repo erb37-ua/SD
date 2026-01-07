@@ -16,9 +16,15 @@ class ExternalCommand(BaseModel):
     cp_id: str
     reason: str = "Weather Alert"
 
+# Modelo para recibir temperatura
+class WeatherUpdate(BaseModel):
+    cp_id: str
+    temperature: float
+
 def create_app(
     state_getter: Callable[[], Dict[str, Dict[str, Any]]],
     command_sender: Callable[[str, str], None],
+    weather_updater: Callable[[str, float], None] = None # <--- AÑADIDO ESTE ARGUMENTO
 ) -> FastAPI:
     app = FastAPI(title="EV Central Panel & API")
 
@@ -47,7 +53,7 @@ def create_app(
     async def health():
         return {"status": "ok"}
     
-    # --- API REST PARA EV_W (NUEVO) ---
+    # --- API REST ---
     
     @app.post("/api/alert")
     async def receive_alert(cmd: ExternalCommand):
@@ -76,8 +82,15 @@ def create_app(
             return {"status": "processed", "action": "RESUME", "cp_id": cmd.cp_id}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
+    
+    @app.post("/api/weather")
+    async def receive_weather(data: WeatherUpdate):
+        # Ahora weather_updater ya existe porque lo pasamos en create_app
+        if weather_updater:
+            weather_updater(data.cp_id, data.temperature)
+        return {"status": "updated"}
 
-    # --- WEBSOCKETS (IGUAL QUE ANTES) ---
+    # --- WEBSOCKETS ---
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         await ws.accept()
@@ -90,10 +103,19 @@ def create_app(
                     msg = await ws.receive_json()
                     if isinstance(msg, dict) and msg.get("type") == "command":
                         cp_id = msg.get("cpId")
-                        action = (msg.get("action") or "").upper()
-                        if cp_id and action in ("STOP", "RESUME"):
+                        
+                        # --- CORRECCIÓN DE VARIABLES AQUÍ ---
+                        raw_action = msg.get("action") or "" # Definimos raw_action
+
+                        if raw_action.startswith("CITY:"):
+                            final_action = raw_action # Mantenemos mayúsculas/minúsculas de la ciudad
+                        else:
+                            final_action = raw_action.upper()
+                            
+                        # Usamos final_action en la comprobación
+                        if cp_id and (final_action in ("STOP", "RESUME") or final_action.startswith("CITY:")):
                             try:
-                                command_sender(cp_id, action)
+                                command_sender(cp_id, final_action) # Enviamos final_action
                                 await ws.send_json({"type": "ack", "ok": True})
                             except Exception as e:
                                 await ws.send_json({"type": "ack", "ok": False, "error": str(e)})

@@ -3,108 +3,132 @@ import time
 import requests
 import sys
 import os
+import json
 
 # --- CONFIGURACIÓN ---
-# ¡PON TU API KEY AQUÍ! Si no tienes, el script usará datos falsos si falla la conexión.
-OPENWEATHER_API_KEY = "TU_API_KEY_AQUI" 
+# Leemos la API KEY del entorno
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 CENTRAL_URL = os.getenv("CENTRAL_URL", "http://localhost:8000")
 
-# Mapeo de CPs a Ciudades (Puedes editarlo o cargarlo de un fichero)
-CP_LOCATIONS = {
-    "CP001": "Alicante,ES",
-    "CP002": "Madrid,ES",
-    "CP003": "Oslo,NO",     # Probablemente haga frío aquí para probar la alerta
-    "CP004": "Sevilla,ES"
-}
+# Detectar si estamos en Docker o en local
+if os.path.exists("/app/Central/cp_database.json"):
+    # Ruta dentro del contenedor Docker
+    DB_FILE_PATH = "/app/Central/cp_database.json"
+else:
+    # Ruta relativa para ejecución local en Windows
+    # Asume que ejecutas desde la carpeta Weather/
+    DB_FILE_PATH = "../Central/cp_database.json"
 
-# Estado interno para no spammear a la Central
-# { "CP001": "OK", "CP003": "BAD" }
+# Estado interno: { "CP001": "OK", "CP003": "BAD" }
 cp_weather_state = {} 
+cp_locations = {} # Se llenará leyendo el JSON: { "CP001": "Alicante" }
+
+def load_cp_locations():
+    """Lee el JSON compartido para saber qué ciudad corresponde a cada CP."""
+    global cp_locations
+    if not os.path.exists(DB_FILE_PATH):
+        print(f"[Error] No encuentro la BD en {DB_FILE_PATH}. Usando datos dummy.")
+        cp_locations = {"CP001": "Alicante", "CP003": "Oslo"}
+        return
+
+    try:
+        with open(DB_FILE_PATH, 'r') as f:
+            data = json.load(f)
+            for item in data:
+                # Extraemos ID y Ciudad
+                cp_id = item.get("id")
+                city = item.get("city", "Alicante")
+                if cp_id:
+                    cp_locations[cp_id] = city
+        print(f"[Info] Ubicaciones cargadas: {len(cp_locations)}")
+    except Exception as e:
+        print(f"[Error] Leyendo DB: {e}")
 
 def get_temperature(city):
-    """
-    Consulta la API de OpenWeatherMap.
-    Retorna la temperatura en Celsius (float).
-    Si falla, retorna un valor de prueba (simulación).
-    """
+    """Obtiene temperatura de OpenWeatherMap o simula si no hay API Key."""
+    
+    # MODO SIMULACIÓN (Si no pusiste clave en el .env)
+    if not OPENWEATHER_API_KEY:
+        if "Oslo" in city: return -5.0
+        return 22.0
+
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
     try:
-        response = requests.get(url, timeout=2)
-        if response.status_code == 200:
-            data = response.json()
-            temp = data['main']['temp']
-            print(f"[OpenWeather] {city}: {temp}ºC")
-            return temp
+        r = requests.get(url, timeout=3)
+        if r.status_code == 200:
+            return r.json()['main']['temp']
         else:
-            print(f"[Error API] {city}: {response.status_code}")
+            print(f"[API Error] {city}: {r.status_code}")
     except Exception as e:
-        print(f"[Error Conexión] {e}")
+        print(f"[Net Error] {e}")
     
-    # --- MODO SIMULACIÓN (FALLBACK) ---
-    # Si no hay internet o API Key, simulamos temperaturas basadas en el nombre
-    if "Oslo" in city or "Helsinki" in city:
-        return -5.0 # Simular frío extremo
-    return 20.0 # Simular buen tiempo
+    # Fallback si falla internet
+    return -5.0 if "Oslo" in city else 20.0
 
 def notify_central(cp_id, action):
-    """
-    Envía POST /api/alert o /api/resume a la Central
-    """
     endpoint = "/api/alert" if action == "STOP" else "/api/resume"
     url = f"{CENTRAL_URL}{endpoint}"
     payload = {
-        "cp_id": cp_id,
-        "reason": "Bad Weather (< 0ºC)" if action == "STOP" else "Weather Improved"
+        "cp_id": cp_id, 
+        "reason": "Weather Alert" if action == "STOP" else "Weather OK"
     }
     
+    print(f"   [Intento] Contactando Central: {url} ...") # Debug
+    
     try:
-        r = requests.post(url, json=payload)
+        r = requests.post(url, json=payload, timeout=5)
         if r.status_code == 200:
-            print(f"--> [Central] Notificado {action} para {cp_id}")
+            print(f"   [-->] Central notificada correctamente: {action}")
             return True
         else:
-            print(f"xx> [Central] Error {r.status_code}: {r.text}")
+            print(f"   [Error Central] Código {r.status_code}: {r.text}")
+            return False
     except Exception as e:
-        print(f"xx> [Central] Error de conexión: {e}")
-    return False
+        print(f"   [Error Conexión] No se pudo conectar a Central: {e}")
+        return False
+
+
+def send_telemetry(cp_id, temp):
+    """Envía la temperatura a la Central para que se vea en el Front."""
+    url = f"{CENTRAL_URL}/api/weather"
+    try:
+        requests.post(url, json={"cp_id": cp_id, "temperature": temp}, timeout=2)
+    except Exception:
+        pass # Ignoramos errores de telemetría para no ensuciar el log
 
 def main():
-    print(f"*** EV_W (Weather Office) Iniciado ***")
-    print(f"Monitorizando: {list(CP_LOCATIONS.keys())}")
-    print(f"Central en: {CENTRAL_URL}")
+    print("*** EV_W Iniciado ***")
+    time.sleep(2) 
     
-    # Inicializar estado asumido como OK
-    for cp in CP_LOCATIONS:
-        cp_weather_state[cp] = "OK"
-
     while True:
-        print("\n--- Comprobando Clima ---")
-        
-        for cp_id, city in CP_LOCATIONS.items():
+        load_cp_locations() 
+
+        print("\n--- Analizando Clima ---")
+        for cp_id, city in cp_locations.items():
+            
+            if cp_id not in cp_weather_state:
+                cp_weather_state[cp_id] = "OK"
+
             temp = get_temperature(city)
             
-            # Lógica de Control
-            current_status = cp_weather_state[cp_id]
-            
-            # CASO 1: Hace frío y estaba OK -> ALERTA (STOP)
-            if temp < 0 and current_status == "OK":
-                print(f"[ALERTA] {city} ({temp}ºC) está helada. Deteniendo {cp_id}...")
+            # ENVIAR DATO A CENTRAL (NUEVO)
+            send_telemetry(cp_id, temp)
+
+            state = cp_weather_state.get(cp_id, "OK")
+            print(f"> {cp_id} ({city}): {temp}ºC")
+
+            if temp < 0 and state == "OK":
+                print(f"  [ALERTA] Congelación. Parando {cp_id}...")
                 if notify_central(cp_id, "STOP"):
                     cp_weather_state[cp_id] = "BAD"
             
-            # CASO 2: Hace bueno y estaba BAD -> RESUME
-            elif temp >= 0 and current_status == "BAD":
-                print(f"[MEJORA] {city} ({temp}ºC) operativa. Reanudando {cp_id}...")
+            elif temp >= 0 and state == "BAD":
+                print(f"  [MEJORA] Clima OK. Reanudando {cp_id}...")
                 if notify_central(cp_id, "RESUME"):
                     cp_weather_state[cp_id] = "OK"
-                    
-            # CASO 3: Sin cambios
-            else:
-                status_str = "OPERATIVO" if temp >= 0 else "DETENIDO"
-                # print(f"   {cp_id}: {status_str} ({temp}ºC)")
-
-        time.sleep(4) # Esperar 4 segundos según especificación
+        
+        time.sleep(5)
 
 if __name__ == "__main__":
     main()

@@ -44,38 +44,65 @@ def get_state_snapshot():
         return {cp_id: dict(data) for cp_id, data in charging_points.items()}
 
 # Funciones de BD / panel
-def load_database(filename="cp_database.txt"):
+def load_database(filename="cp_database.json"): # <--- Cambiado a .json
     """
-    Carga los CPs conocidos desde un archivo de texto al iniciar
-    Formato esperado por línea: cp_id,location,price
+    Carga los CPs desde un archivo JSON.
+    Estructura esperada: [{"id":"CP001", "location":"...", "city":"...", "price":0.5}, ...]
     """
     print(f"[Info] Cargando base de datos de CPs desde {filename}...")
     try:
-        with open(filename, 'r') as f:
-            for line in f:
-                if line.strip():
-                    parts = line.strip().split(',')
-                    if len(parts) >= 3:
-                        cp_id = parts[0]
-                        location = parts[1]
-                        try:
-                            price = float(parts[2])
-                        except:
-                            price = 0.50
-                        with db_lock:
-                            charging_points[cp_id] = {
-                                "location": location,
-                                "price": price,
-                                "state": "DESCONECTADO",
-                                "driver": None,
-                                "consumo": 0.0,
-                                "importe": 0.0
-                            }
+        # Aseguramos ruta absoluta si es necesario, o confiamos en el workdir
+        if not os.path.exists(filename):
+            print(f"[Error] No se encontró {filename}. Empezando con 0 CPs.")
+            return
+
+        with open(filename, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+            with db_lock:
+                for item in data:
+                    cp_id = item.get("id")
+                    if cp_id:
+                        charging_points[cp_id] = {
+                            "location": item.get("location", "Desconocida"),
+                            "city": item.get("city", "Alicante"), # Guardamos la ciudad también
+                            "price": item.get("price", 0.50),
+                            "state": "DESCONECTADO",
+                            "driver": None,
+                            "consumo": 0.0,
+                            "importe": 0.0
+                        }
         print(f"[Info] Cargados {len(charging_points)} CPs.")
-    except FileNotFoundError:
-        print(f"[Error] No se encontró el archivo {filename}. Empezando con 0 CPs.")
+
+    except json.JSONDecodeError:
+        print(f"[Error] El archivo {filename} no es un JSON válido.")
     except Exception as e:
         print(f"[Error] Al cargar {filename}: {e}")
+
+
+def save_database(filename="cp_database.json"):
+    """
+    Guarda el estado actual (incluyendo cambios de ciudad) en el JSON.
+    """
+    try:
+        data_list = []
+        with db_lock:
+            for cp_id, data in charging_points.items():
+                # Reconstruimos el objeto para guardar
+                item = {
+                    "id": cp_id,
+                    "location": data["location"],
+                    "city": data.get("city", "Alicante"), # Guardamos la ciudad
+                    "price": data["price"]
+                }
+                data_list.append(item)
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data_list, f, indent=2)
+        print(f"[Info] Base de datos actualizada con nueva ciudad.")
+    except Exception as e:
+        print(f"[Error] Al guardar base de datos: {e}")
+
 
 async def display_panel():
     """
@@ -493,17 +520,31 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
 
 
 def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
-    """
-    Lanza el servidor FastAPI/Uvicorn en un hilo.
-    Comparte el estado y la función de comandos con el panel.
-    """
-    from panel_central import create_app  # import diferido para evitar ciclos
+    from panel_central import create_app
+
+    def handle_web_command(cp_id, action):
+        if action.startswith("CITY:"):
+            new_city = action.split(":", 1)[1]
+            print(f"[WEB CMD] Cambiando ciudad de {cp_id} a {new_city}")
+            with db_lock:
+                if cp_id in charging_points:
+                    charging_points[cp_id]['city'] = new_city
+                    # Reseteamos temperatura visualmente hasta que llegue el nuevo dato
+                    charging_points[cp_id]['temp'] = None 
+            save_database() 
+        else:
+            process_admin_command(cp_id, action, "Parado" if action == "STOP" else "Activado")
+
+    # NUEVA FUNCIÓN PARA ACTUALIZAR TEMPERATURA
+    def handle_weather_update(cp_id, temp):
+        with db_lock:
+            if cp_id in charging_points:
+                charging_points[cp_id]['temp'] = temp
 
     app = create_app(
         state_getter=get_state_snapshot,
-        command_sender=lambda cp_id, action: process_admin_command(
-            cp_id, action, "Parado" if action == "STOP" else "Activado"
-        ),
+        command_sender=handle_web_command,
+        weather_updater=handle_weather_update # <-- Pasamos el callback aquí
     )
 
     # Montar estáticos (Central/web)
@@ -521,6 +562,7 @@ def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
     t = Thread(target=_run, daemon=True)
     t.start()
     print(f"[WEB] Panel disponible en http://{http_host}:{http_port}")
+
 
 async def main_async(listen_port: int, kafka_broker: str):
     global kafka_producer, stop_event_async

@@ -1,7 +1,0 @@
-CP001,C/Italia 5,0.54
-CP002,Gran Via 2,0.54
-CP003,C/Serrano 10,0.60
-CP004,C/Mondongo 33,0.50
-CP005,C/Mario Alarcon 4,0.61
-CP006,C/Ivan 69,0.53
-CP007,C/Esteban 24,0.53
