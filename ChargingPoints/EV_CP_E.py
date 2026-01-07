@@ -5,6 +5,7 @@ import time
 import json
 import random
 from confluent_kafka import Producer, Consumer
+from cryptography.fernet import Fernet
 
 # --- CONFIGURACIÓN ---
 HEARTBEAT_TIMEOUT = 3.0  # Si en 3 seg no hay latido, asumimos que el driver cerró la ventana
@@ -12,6 +13,7 @@ HEARTBEAT_TIMEOUT = 3.0  # Si en 3 seg no hay latido, asumimos que el driver cer
 # --- ESTADO GLOBAL ---
 cp_id_global = None
 kafka_producer = None
+aes_key = None
 
 # Variables de Estado
 is_faulty = False           
@@ -189,12 +191,21 @@ def kafka_consumer_loop(broker, cp_id):
 
 def send_kafka(topic, data):
     try:
-        kafka_producer.produce(topic, value=json.dumps(data).encode('utf-8'))
+        if topic == "telemetry":
+            if not aes_key:
+                print("[CP] Clave AES no configurada, telemetría descartada.")
+                return
+            f = Fernet(aes_key)
+            ciphertext = f.encrypt(json.dumps(data).encode("utf-8")).decode("utf-8")
+            envelope = {"cpId": data.get("cpId"), "ciphertext": ciphertext}
+            kafka_producer.produce(topic, value=json.dumps(envelope).encode("utf-8"))
+        else:
+            kafka_producer.produce(topic, value=json.dumps(data).encode('utf-8'))
         kafka_producer.poll(0)
     except: pass
 
 def main():
-    global kafka_producer, cp_id_global
+    global kafka_producer, cp_id_global, aes_key
     if len(sys.argv) < 4: return
     
     port = int(sys.argv[1])
@@ -221,7 +232,12 @@ def main():
                 while True:
                     d = conn.recv(1024)
                     if not d: break
-                    if d.decode().strip() == "HEALTH_CHECK":
+                    message = d.decode().strip()
+                    if message.startswith("SET_KEY#"):
+                        key_value = message.split("#", 1)[1]
+                        aes_key = key_value.encode("utf-8")
+                        conn.sendall("KEY_OK".encode("utf-8"))
+                    elif message == "HEALTH_CHECK":
                         with fault_lock:
                             st = "KO" if is_faulty else "OK"
                         conn.sendall(st.encode())
