@@ -69,14 +69,13 @@ def get_state_snapshot():
         return {cp_id: dict(data) for cp_id, data in charging_points.items()}
 
 # Funciones de BD / panel
-def load_database(filename="cp_database.json"): # <--- Cambiado a .json
+def load_database(filename="cp_database.json"):
     """
     Carga los CPs desde un archivo JSON.
     Estructura esperada: [{"id":"CP001", "location":"...", "city":"...", "price":0.5}, ...]
     """
     print(f"[Info] Cargando base de datos de CPs desde {filename}...")
     try:
-        # Aseguramos ruta absoluta si es necesario, o confiamos en el workdir
         if not os.path.exists(filename):
             print(f"[Error] No se encontró {filename}. Empezando con 0 CPs.")
             return
@@ -113,11 +112,10 @@ def save_database(filename="cp_database.json"):
         data_list = []
         with db_lock:
             for cp_id, data in charging_points.items():
-                # Reconstruimos el objeto para guardar
                 item = {
                     "id": cp_id,
                     "location": data["location"],
-                    "city": data.get("city", "Alicante"), # Guardamos la ciudad
+                    "city": data.get("city", "Alicante"),
                     "price": data["price"]
                 }
                 data_list.append(item)
@@ -170,7 +168,7 @@ async def display_panel():
 
         print("--- APLICATION MESSAGES ---")
         print("CENTRAL system status OK")
-        # esperar 2 segundos
+
         await asyncio.sleep(2)
 
 # Hilo para leer comandos de administrador (stop/resume)
@@ -199,7 +197,7 @@ def admin_input_thread(stop_evt: threading.Event):
                 print(f"{ROJO}[Admin] Error: Se requiere un comando y un cp_id (ej: stop CP001){RESET}")
                 continue
                 
-            cp_id = parts[1].upper() # Estandarizar a mayúsculas
+            cp_id = parts[1].upper()
             
             if cmd == 'stop':
                 # Enviar comando de Parada
@@ -516,13 +514,10 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                 with db_lock:
                     if cp_id not in charging_points: continue
 
-                    # --- CORRECCIÓN AQUÍ ---
                     current_db_state = charging_points[cp_id]['state']
 
                     if status == 'CHARGING':
-                        # PROTECCIÓN CONTRA RACE CONDITION:
                         # Si por socket ya nos han dicho que está AVERIADO, ignoramos este mensaje
-                        # de "Cargando" que puede venir con retraso.
                         if current_db_state == "Averiado":
                             continue
 
@@ -567,7 +562,6 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                         charging_points[cp_id]['consumo'] = 0.0
                         charging_points[cp_id]['importe'] = 0.0
 
-                    # --- NUEVA GESTIÓN DE ERROR ---
                     elif status == 'ERROR':
                         print(f"[Kafka Telemetry] Recibido ERROR técnico de {cp_id}")
                         # Forzamos el estado a Averiado y limpiamos el driver
@@ -600,7 +594,6 @@ def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
         else:
             process_admin_command(cp_id, action, "Parado" if action == "STOP" else "Activado")
 
-    # NUEVA FUNCIÓN PARA ACTUALIZAR TEMPERATURA
     def handle_weather_update(cp_id, temp):
         with db_lock:
             if cp_id in charging_points:
@@ -637,7 +630,7 @@ async def main_async(listen_port: int, kafka_broker: str):
     # Cargar DB
     load_database()
 
-    # Inicializar Kafka producer
+    # Inicializar Kafka
     try:
         kafka_producer = Producer({'bootstrap.servers': kafka_broker})
         print(f"[Kafka] Productor conectado a {kafka_broker}")
@@ -648,7 +641,6 @@ async def main_async(listen_port: int, kafka_broker: str):
     # Lanzar panel
     panel_task = asyncio.create_task(display_panel())
 
-    # Lanzar panel web (hilo separado con uvicorn)
     try:
         start_web_panel(http_host="0.0.0.0", http_port=8000, kafka_broker=kafka_broker)
     except Exception as e:

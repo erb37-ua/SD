@@ -24,14 +24,15 @@ class WeatherUpdate(BaseModel):
 def create_app(
     state_getter: Callable[[], Dict[str, Dict[str, Any]]],
     command_sender: Callable[[str, str], None],
-    weather_updater: Callable[[str, float], None] = None # <--- AÑADIDO ESTE ARGUMENTO
+    weather_updater: Callable[[str, float], None] = None,
+    apikey_handler: Callable[[str], None] = None
 ) -> FastAPI:
     app = FastAPI(title="EV Central Panel & API")
 
     # Lista de websockets conectados
     active_clients: List[WebSocket] = []
 
-    # --- FRONTEND ---
+    # FRONTEND
     @app.get("/")
     async def root():
         return HTMLResponse(
@@ -53,8 +54,7 @@ def create_app(
     async def health():
         return {"status": "ok"}
     
-    # --- API REST ---
-    
+    # API REST
     @app.post("/api/alert")
     async def receive_alert(cmd: ExternalCommand):
         """
@@ -63,7 +63,6 @@ def create_app(
         """
         print(f"[API] Recibida ALERTA para {cmd.cp_id}: {cmd.reason}")
         try:
-            # Reutilizamos la lógica de 'admin stop' que ya tienes
             command_sender(cmd.cp_id, "STOP")
             return {"status": "processed", "action": "STOP", "cp_id": cmd.cp_id}
         except Exception as e:
@@ -77,7 +76,6 @@ def create_app(
         """
         print(f"[API] Recibida REANUDACIÓN para {cmd.cp_id}: {cmd.reason}")
         try:
-            # Reutilizamos la lógica de 'admin resume'
             command_sender(cmd.cp_id, "RESUME")
             return {"status": "processed", "action": "RESUME", "cp_id": cmd.cp_id}
         except Exception as e:
@@ -85,12 +83,11 @@ def create_app(
     
     @app.post("/api/weather")
     async def receive_weather(data: WeatherUpdate):
-        # Ahora weather_updater ya existe porque lo pasamos en create_app
         if weather_updater:
             weather_updater(data.cp_id, data.temperature)
         return {"status": "updated"}
 
-    # --- WEBSOCKETS ---
+    # WEBSOCKETS
     @app.get("/management/status")
     async def management_status():
         state = state_getter()
@@ -105,7 +102,7 @@ def create_app(
         if climate_handler is None:
             return {"ok": False, "error": "climate_handler_not_configured"}
         return climate_handler(payload)
-
+    
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
         await ws.accept()
@@ -118,16 +115,24 @@ def create_app(
                     msg = await ws.receive_json()
                     if isinstance(msg, dict) and msg.get("type") == "command":
                         cp_id = msg.get("cpId")
-                        
-                        # --- CORRECCIÓN DE VARIABLES AQUÍ ---
-                        raw_action = msg.get("action") or "" # Definimos raw_action
+                        raw_action = msg.get("action") or ""
+
+                        # LÓGICA DE SISTEMA (API KEY)
+                        if cp_id == 'SYSTEM':
+                            if raw_action.startswith('SET_APIKEY:') and apikey_handler:
+                                key = raw_action.split(':', 1)[1]
+                                apikey_handler(key) # Enviamos la clave a EV_Central -> EV_W
+                                await ws.send_json({"type": "ack", "ok": True})
+                            elif raw_action == 'REVOKE_APIKEY' and apikey_handler:
+                                apikey_handler(None) # Revocamos
+                                await ws.send_json({"type": "ack", "ok": True})
+                            continue
 
                         if raw_action.startswith("CITY:"):
                             final_action = raw_action # Mantenemos mayúsculas/minúsculas de la ciudad
                         else:
                             final_action = raw_action.upper()
-                            
-                        # Usamos final_action en la comprobación
+                        
                         if cp_id and (final_action in ("STOP", "RESUME") or final_action.startswith("CITY:")):
                             try:
                                 command_sender(cp_id, final_action) # Enviamos final_action

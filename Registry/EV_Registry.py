@@ -81,8 +81,7 @@ def main():
         # Listar archivos para ver qué pasa
         print(f"Archivos en {base_dir}: {os.listdir(base_dir)}")
         return
-    
-    # Iniciamos uvicorn con SSL habilitado
+
     uvicorn.run(
         app, 
         host="0.0.0.0", 

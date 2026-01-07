@@ -3,9 +3,9 @@ import requests
 import sys
 import os
 import json
-import argparse # <--- Importamos la librería para parsear argumentos
+import argparse
 
-# --- CONFIGURACIÓN ---
+# CONFIGURACIÓN
 # Leemos la API KEY del entorno
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
@@ -21,7 +21,7 @@ else:
     # Asume que ejecutas desde la carpeta Weather/
     DB_FILE_PATH = "../Central/cp_database.json"
 
-# Estado interno: { "CP001": "OK", "CP003": "BAD" }
+# Estado interno
 cp_weather_state = {} 
 cp_locations = {} 
 
@@ -49,7 +49,7 @@ def load_cp_locations():
 def get_temperature(city):
     """Obtiene temperatura de OpenWeatherMap o simula si no hay API Key."""
     
-    # MODO SIMULACIÓN (Si no pusiste clave en el .env)
+    # MODO SIMULACIÓN (si no carga la API Key)
     if not OPENWEATHER_API_KEY:
         if "Oslo" in city: return -5.0
         return 22.0
@@ -114,7 +114,7 @@ def main():
 
             temp = get_temperature(city)
             
-            # ENVIAR DATO A CENTRAL
+            # Enviar dato a la central
             send_telemetry(cp_id, temp)
 
             state = cp_weather_state.get(cp_id, "OK")
@@ -133,7 +133,6 @@ def main():
         time.sleep(5)
 
 if __name__ == "__main__":
-    # --- USO DE ARGPARSE ---
     parser = argparse.ArgumentParser(description='EV Weather Module')
     parser.add_argument('central_host', help='IP o Hostname de la Central (ej: 192.168.1.35)')
     

@@ -59,7 +59,7 @@ def write_central_key_log(cp_id, aes_key):
         return None
 
 def get_registry_token(registry_url, cp_id, location, verify_ssl):
-    # Aseguramos que la URL está bien formada si el usuario olvidó el esquema
+    # Aseguramos que la URL está bien formada
     if not registry_url.startswith("http"):
         registry_url = "https://" + registry_url
         
@@ -83,9 +83,8 @@ def get_registry_token(registry_url, cp_id, location, verify_ssl):
         return None
 
 def main():
-    registry_ip_arg = None # Variable auxiliar para la IP del Registry
+    registry_ip_arg = None
 
-    # Validar argumentos de línea de comandos
     if len(sys.argv) >= 6:
         central_ip = sys.argv[1]
         try:
@@ -101,7 +100,6 @@ def main():
             print("Error: El puerto engine debe ser un número entero.")
             return
         
-        # --- NUEVO: CAPTURAR 6º ARGUMENTO (IP REGISTRY) ---
         if len(sys.argv) >= 7:
             registry_ip_arg = sys.argv[6]
 
@@ -121,17 +119,17 @@ def main():
         central_port = int(central_port)
         engine_port = int(engine_port)
 
-    # --- CONFIGURACIÓN URL REGISTRY ---
-    # 1. Leemos variable de entorno por defecto
+    # CONFIGURACIÓN URL REGISTRY
+    # Leemos variable de entorno por defecto
     registry_url = os.getenv("REGISTRY_URL", "")
 
-    # 2. Si se ha pasado la IP por argumento (o variable REGISTRY_HOST), TIENE PRIORIDAD
+    # Si se ha pasado la IP por argumento (o variable REGISTRY_HOST), TIENE PRIORIDAD
     if registry_ip_arg:
         # Asumimos puerto 8080 y https
         registry_url = f"https://{registry_ip_arg}:8080"
         print(f"[{cp_id}] Configurado Registry manual en: {registry_url}")
     
-    # 3. Si sigue vacía, ponemos un default
+    # Si sigue vacía, ponemos un default
     if not registry_url:
         registry_url = "https://localhost:8080"
 
@@ -141,7 +139,7 @@ def main():
     cert_path = os.getenv("REGISTRY_CERT_PATH")
     verify_setting = cert_path if cert_path else verify_ssl
 
-    # --- INICIO DEL FLUJO ---
+    # INICIO DEL FLUJO
     token = get_registry_token(registry_url, cp_id, cp_location, verify_setting)
     if not token:
         return
