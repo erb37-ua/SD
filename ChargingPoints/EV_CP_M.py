@@ -3,6 +3,7 @@ import sys
 import time
 import os
 import requests
+from urllib.parse import urlparse
 
 def connect_to_engine(engine_ip, engine_port):
     """
@@ -77,15 +78,48 @@ def get_registry_token(registry_url, cp_id, location, verify_ssl):
         return None
 
 def main():
+    def normalize_cp_id(value):
+        return (value or "").strip().upper()
+
+    def validate_port(raw_value, label):
+        try:
+            port = int(raw_value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{label} debe ser un entero.")
+        if port <= 0 or port > 65535:
+            raise ValueError(f"{label} fuera de rango.")
+        return port
+
+    def validate_host(value, label):
+        host = (value or "").strip()
+        if not host:
+            raise ValueError(f"{label} requerido.")
+        return host
+
+    def validate_cp_id(raw_value):
+        cp_id = normalize_cp_id(raw_value)
+        if not cp_id or not cp_id.isalnum():
+            raise ValueError("CP_ID inválido.")
+        return cp_id
+
+    def validate_registry_url(value):
+        url = (value or "").strip()
+        if not url:
+            raise ValueError("REGISTRY_URL requerido.")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("REGISTRY_URL inválida.")
+        return url
+
     if len(sys.argv) >= 6:
         central_ip = sys.argv[1]
         cp_id = sys.argv[3]
         engine_ip = sys.argv[4]
         try:
-            central_port = int(sys.argv[2])
-            engine_port = int(sys.argv[5])
-        except ValueError:
-            print("Error: Los puertos deben ser números enteros.")
+            central_port = validate_port(sys.argv[2], "CENTRAL_PORT")
+            engine_port = validate_port(sys.argv[5], "ENGINE_PORT")
+        except ValueError as exc:
+            print(f"Error: {exc}")
             return
     else:
         central_ip = os.getenv("CENTRAL_HOST")
@@ -97,14 +131,36 @@ def main():
             print("Error: Faltan argumentos o variables de entorno.")
             print("Uso: python EV_CP_M.py <IP_Central> <Puerto_Central> <ID_CP> <IP_Engine> <Puerto_Engine>")
             return
-        central_port = int(central_port)
-        engine_port = int(engine_port)
+        try:
+            central_port = validate_port(central_port, "CENTRAL_PORT")
+            engine_port = validate_port(engine_port, "ENGINE_PORT")
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return
+
+    try:
+        central_ip = validate_host(central_ip, "CENTRAL_HOST")
+        engine_ip = validate_host(engine_ip, "ENGINE_HOST")
+        cp_id = validate_cp_id(cp_id)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return
 
     registry_url = os.getenv("REGISTRY_URL", "https://registry:8080")
     cp_location = os.getenv("CP_LOCATION", "unknown")
     verify_ssl = os.getenv("REGISTRY_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
     cert_path = os.getenv("REGISTRY_CERT_PATH")
     verify_setting = cert_path if cert_path else verify_ssl
+    try:
+        registry_url = validate_registry_url(registry_url)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return
+
+    cp_location = (cp_location or "").strip()
+    if not cp_location:
+        print("Error: CP_LOCATION requerido.")
+        return
 
     token = get_registry_token(registry_url, cp_id, cp_location, verify_setting)
     if not token:

@@ -85,6 +85,12 @@
     .driver small{color:var(--muted);font-size:12px;}
     .driver .tag{padding:4px 8px;border-radius:8px;font-size:12px;background:rgba(79,139,255,0.18);border:1px solid rgba(79,139,255,0.4);}
 
+    .config{display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);}
+    .config-row{display:flex;gap:8px;}
+    .input-api{flex:1;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.12);color:#fff;border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;}
+    .btn-api{background:linear-gradient(135deg,#4f8bff,#34d5ff);border:0;color:#0b1220;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;}
+    .api-status{font-size:12px;color:var(--muted);}
+
     .statusline{font-size:13px;color:var(--muted);}
     .log{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-size:12px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.24);border-radius:10px;padding:12px;border:1px solid rgba(255,255,255,0.06);}
     a{color:var(--accent);}
@@ -105,6 +111,14 @@
     </div>
 
     <div class="panel">
+      <h2><i class="lucide lucide-key"></i> Weather API</h2>
+      <div class="config">
+        <div class="config-row">
+          <input type="password" class="input-api" placeholder="OpenWeather API Key" id="api-key-input">
+          <button class="btn-api" id="api-key-save">Guardar</button>
+        </div>
+        <div class="api-status" id="api-key-status">Sin clave cargada</div>
+      </div>
       <h2><i class="lucide lucide-users"></i> Drivers conectados</h2>
       <div id="drivers" class="drivers"></div>
       <h2><i class="lucide lucide-clipboard-list"></i> Actividad</h2>
@@ -118,6 +132,9 @@
     const logEl=document.getElementById('log');
     const driversEl=document.getElementById('drivers');
     const kpisEl=document.getElementById('kpis');
+    const apiKeyInput=document.getElementById('api-key-input');
+    const apiKeySave=document.getElementById('api-key-save');
+    const apiKeyStatus=document.getElementById('api-key-status');
 
     const cpNodes=new Map(); // id -> DOM node cache
 
@@ -283,6 +300,32 @@
 
     function log(line){ logEl.textContent=`[${new Date().toLocaleTimeString()}] ${line}\n`+logEl.textContent; }
 
+    async function saveApiKey(){
+      const value=(apiKeyInput.value||'').trim();
+      if(!value){
+        apiKeyStatus.textContent='Ingresa una API Key válida.';
+        return;
+      }
+      apiKeyStatus.textContent='Guardando...';
+      try{
+        const res=await fetch('/api/config/weather-key',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({api_key:value})
+        });
+        if(!res.ok){
+          const data=await res.json().catch(()=>({}));
+          throw new Error(data.detail||'Error guardando API key');
+        }
+        localStorage.setItem('weather_api_key_set', '1');
+        apiKeyInput.value='';
+        apiKeyStatus.textContent='API key guardada.';
+        log('API key del clima actualizada.');
+      }catch(err){
+        apiKeyStatus.textContent=err.message;
+      }
+    }
+
     let ws;
     function connect(){
       const proto=location.protocol==='https:'?'wss':'ws';
@@ -300,6 +343,10 @@
       try{ ws?.send(JSON.stringify({type:'command',cpId,action})); log(`→ ${action} enviado a ${cpId}`); }
       catch(e){ log('No se pudo enviar comando: '+e.message); }
     }
+    apiKeySave?.addEventListener('click', saveApiKey);
+    apiKeyInput?.addEventListener('keydown', (ev)=>{ if(ev.key==='Enter') saveApiKey(); });
+    const keySet=localStorage.getItem('weather_api_key_set');
+    if(keySet){ apiKeyStatus.textContent='API key guardada en este navegador.'; }
     connect();
   </script>
 </body>

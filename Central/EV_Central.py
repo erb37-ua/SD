@@ -28,6 +28,7 @@ JWT_ALG = "HS256"
 
 db_lock = threading.Lock()
 audit_lock = threading.Lock()
+weather_key_lock = threading.Lock()
 
 kafka_producer = None
 
@@ -35,6 +36,17 @@ stop_event_threads = threading.Event()
 stop_event_async = None 
 
 pending_requests = []
+
+WEATHER_KEY_FILE = os.path.join(os.path.dirname(__file__), "weather_api_key.json")
+
+def save_weather_api_key(api_key: str) -> None:
+    payload = {
+        "api_key": api_key,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    with weather_key_lock:
+        with open(WEATHER_KEY_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
 
 def log_audit(evento, ip, accion):
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -498,14 +510,15 @@ def kafka_telemetry_consumer(broker, stop_evt: threading.Event):
                     
                     elif status == 'COMPLETED':
                         print(f"[Kafka Telemetry] Recibida finalización de {cp_id}")
-                        ticket_message = {
-                            'driverId': charging_points[cp_id]['driver'],
-                            'cpId': cp_id,
-                            'status': 'COMPLETED',
-                            'final_consumo_kw': telemetry.get('final_consumo_kw'),
-                            'final_importe_eur': telemetry.get('final_importe_eur')
-                        }
-                        send_kafka_message('tickets', ticket_message)
+                        if not telemetry.get("ticket_sent"):
+                            ticket_message = {
+                                'driverId': charging_points[cp_id]['driver'],
+                                'cpId': cp_id,
+                                'status': 'COMPLETED',
+                                'final_consumo_kw': telemetry.get('final_consumo_kw'),
+                                'final_importe_eur': telemetry.get('final_importe_eur')
+                            }
+                            send_kafka_message('tickets', ticket_message)
                         
                         charging_points[cp_id]['state'] = "Activado"
                         charging_points[cp_id]['driver'] = None
@@ -570,7 +583,8 @@ def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
     app = create_app(
         state_getter=get_state_snapshot,
         command_sender=handle_web_command,
-        weather_updater=handle_weather_update
+        weather_updater=handle_weather_update,
+        weather_key_setter=save_weather_api_key
     )
 
     from fastapi.staticfiles import StaticFiles
