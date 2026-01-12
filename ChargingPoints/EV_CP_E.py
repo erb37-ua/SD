@@ -7,30 +7,24 @@ import random
 from confluent_kafka import Producer, Consumer
 from cryptography.fernet import Fernet
 
-# --- CONFIGURACIÓN ---
-HEARTBEAT_TIMEOUT = 3.0  # Si en 3 seg no hay latido, asumimos que el driver cerró la ventana
+HEARTBEAT_TIMEOUT = 3.0 
 
-# --- ESTADO GLOBAL ---
 cp_id_global = None
 kafka_producer = None
 aes_key = None
 
-# Variables de Estado
 is_faulty = False           
 is_charging = False         
 is_stopped_admin = False    
 
-# Control de Carga
 current_charge_stop_event = None
 current_charging_driver = None 
 
-# Locks para thread-safety
 fault_lock = threading.Lock()
 charge_lock = threading.Lock()
 admin_lock = threading.Lock()
 
-# --- GESTIÓN DE SESIONES (Watchdog) ---
-active_sessions = {} # { 'driverId': timestamp }
+active_sessions = {} 
 session_lock = threading.Lock()
 
 def input_thread():
@@ -64,22 +58,19 @@ def session_watchdog():
         to_remove = []
 
         with session_lock:
-            # Buscar conductores que han dejado de "latir"
             for did, last_seen in active_sessions.items():
                 if (now - last_seen) > HEARTBEAT_TIMEOUT:
                     print(f"[Watchdog] ¡ALERTA! Driver {did} desapareció (Cierre de terminal detectado).")
                     to_remove.append(did)
             
-            # Limpiar sesiones muertas y detener cargas si corresponde
             for did in to_remove:
                 del active_sessions[did]
                 
-                # SI EL CONDUCTOR QUE DESAPARECIÓ ESTÁ CARGANDO, PARAMOS TODO
                 with charge_lock:
                     if is_charging and current_charging_driver == did:
                         print(f"[Watchdog] Deteniendo carga de {did} para liberar el CP...")
                         if current_charge_stop_event:
-                            current_charge_stop_event.set() # Esto despierta al hilo de carga
+                            current_charge_stop_event.set()
 
 def charging_thread(driver_id, stop_evt):
     """ 
@@ -99,9 +90,7 @@ def charging_thread(driver_id, stop_evt):
 
     print(f"[Carga] Suministrando energía a {driver_id}...")
 
-    # Bucle de carga
     while not stop_evt.is_set():
-        # 1. Chequeo de Avería interna
         with fault_lock:
             if is_faulty:
                 print("[Carga] Abortada por AVERÍA del CP.")
@@ -109,38 +98,30 @@ def charging_thread(driver_id, stop_evt):
                 razon_fin = "Technical Fault"
                 break
         
-        # 2. Espera inteligente (Wait) en vez de Sleep
-        # Si el Watchdog activa el evento, el wait retorna True INMEDIATAMENTE.
         if stop_evt.wait(timeout=1.0):
             print("[Carga] Interrumpida (Driver desconectado o parada manual).")
             break
 
-        # 3. Simulación
         consumo += random.uniform(0.1, 0.5)
         coste = consumo * 0.50
 
-        # Telemetría
         msg = {
             'cpId': cp_id_global, 'driverId': driver_id, 
             'status': 'CHARGING', 'consumo_kw': round(consumo,3), 'importe_eur': round(coste,2)
         }
         send_kafka('telemetry', msg)
 
-    # --- CIERRE DE CARGA ---
     final_msg = {
         'cpId': cp_id_global, 'driverId': driver_id,
         'status': status_fin, 'reason': razon_fin,
         'final_consumo_kw': round(consumo,3), 'final_importe_eur': round(coste,2)
     }
     
-    # IMPORTANTE: Enviamos el Ticket. 
-    # Al recibir esto, la Central marcará el CP como "Disponible" (Activado) de nuevo.
     send_kafka('tickets', final_msg)
     
     if status_fin == "ERROR":
         send_kafka('telemetry', final_msg)
 
-    # Liberar variables internas
     with charge_lock:
         is_charging = False
         current_charging_driver = None
@@ -163,26 +144,22 @@ def kafka_consumer_loop(broker, cp_id):
             did = data.get('driverId')
             action = data.get('action')
 
-            # ACTUALIZAR LATIDO (Vital para evitar que el Watchdog salte)
             if action == 'HEARTBEAT':
                 with session_lock:
                     active_sessions[did] = time.time()
                 continue 
 
-            # PROCESAR AUTORIZACIÓN
             if action == 'AUTHORIZE':
                 with charge_lock:
-                    if is_charging: continue # Ya está ocupado
+                    if is_charging: continue 
                 with admin_lock:
-                    if is_stopped_admin: continue # Está bloqueado
+                    if is_stopped_admin: continue 
                 
-                # Iniciar nuevo hilo de carga
                 evt = threading.Event()
                 global current_charge_stop_event
                 current_charge_stop_event = evt
                 threading.Thread(target=charging_thread, args=(did, evt)).start()
 
-            # PROCESAR PARADA MANUAL
             elif action == 'STOP':
                 if current_charge_stop_event:
                     current_charge_stop_event.set()
@@ -214,12 +191,10 @@ def main():
 
     kafka_producer = Producer({'bootstrap.servers': broker})
 
-    # Iniciamos los hilos auxiliares
     threading.Thread(target=input_thread, daemon=True).start()
     threading.Thread(target=kafka_consumer_loop, args=(broker, cp_id_global), daemon=True).start()
-    threading.Thread(target=session_watchdog, daemon=True).start() # <--- EL WATCHDOG
+    threading.Thread(target=session_watchdog, daemon=True).start()
 
-    # Servidor para Monitor
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.bind(('0.0.0.0', port))
     srv.listen(1)
