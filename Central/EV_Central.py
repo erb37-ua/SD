@@ -72,6 +72,30 @@ def validate_jwt(token, cp_id):
         return False, "cp_id_mismatch"
     return True, payload
 
+def get_token_from_db(cp_id):
+    """
+    Obtiene el último token válido consultando la API del db_server.
+    """
+    try:
+        # Usamos DB_HOST que ya está definido (ej: http://db_server:6000)
+        url = f"{DB_HOST}/cps"
+        # Timeout corto para no bloquear el hilo si la DB va lenta
+        resp = requests.get(url, timeout=2)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            # Buscamos el CP en la lista que devuelve la API
+            for cp in data:
+                if cp.get("id") == cp_id:
+                    return cp.get("auth_token")
+        else:
+            print(f"[API Error] DB Server devolvió status {resp.status_code}")
+
+    except Exception as e:
+        print(f"[Error] Fallo al consultar token a la DB API: {e}")
+    
+    return None
+
 def get_state_snapshot():
     """
     Devuelve una copia segura del estado de los CPs para el panel web.
@@ -100,12 +124,12 @@ def load_database(filename="ignored"):
                         charging_points[cp_id]["location"] = item.get("location", "Desconocida")
                         charging_points[cp_id]["city"] = item.get("city", "Alicante")
                         charging_points[cp_id]["price"] = item.get("price", 0.50)
-            print(f"[Info] ✅ ÉXITO: Sincronizados {len(charging_points)} CPs desde DB Server.")
+            print(f"[Info] ÉXITO: Sincronizados {len(charging_points)} CPs desde DB Server.")
             print(f"[Info] CPs cargados: {list(charging_points.keys())}") # Para ver si está el CP001
         else:
             print(f"[Error DB] Status {resp.status_code} al conectar con {DB_HOST}")
     except Exception as e:
-        print(f"[Error DB] ❌ No se pudo conectar a la base de datos ({DB_HOST}): {e}")
+        print(f"[Error DB] No se pudo conectar a la base de datos ({DB_HOST}): {e}")
         print("         Asegúrate de que el contenedor 'db_server' está encendido.")
 
 
@@ -141,7 +165,7 @@ async def display_panel():
         
         with db_lock:
             if not charging_points:
-                print(f"{ROJO}⚠️  ATENCIÓN: No hay CPs cargados en memoria.{RESET}")
+                print(f"{ROJO} ATENCIÓN: No hay CPs cargados en memoria.{RESET}")
                 print(f"   Comprueba la conexión con {DB_HOST}")
             cp_ids = sorted(charging_points.keys())
 
@@ -281,21 +305,30 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 
                 with db_lock:
                     if cp_id in charging_points:
-                        ok, reason = validate_jwt(token, cp_id)
-                        if ok:
+                        # 1. Validación de firma (lo que ya tenías)
+                        ok_sig, payload = validate_jwt(token, cp_id)
+                        
+                        # 2. Validación contra base de datos (NUEVO)
+                        stored_token = get_token_from_db(cp_id)
+                        token_match = (token == stored_token)
+
+                        if ok_sig and token_match:
                             charging_points[cp_id]['state'] = "Activado"
-                            print(f"[Registro] CP '{cp_id}' (desde BD) se ha activado.")
+                            print(f"[Registro] CP '{cp_id}' autenticado correctamente.")
+                            # ... resto de lógica de generación de clave AES ...
                             aes_key = Fernet.generate_key()
+                            # ...
                             with keys_lock:
                                 cp_aes_keys[cp_id] = aes_key
                             response = f"ACK#KEY#{aes_key.decode('utf-8')}"
                             log_audit("cp_connected", client_ip, f"cp_id={cp_id}")
                         else:
-                            response = f"NACK: TOKEN_INVALID ({reason})"
-                            log_audit("critical_error", client_ip, f"registro_fallido cp_id={cp_id}")
+                            reason = "FIRMA_INVALIDA" if not ok_sig else "TOKEN_EXPIRADO_O_REEMPLAZADO"
+                            print(f"[Registro] RECHAZADO {cp_id}. Razón: {reason}")
+                            response = f"NACK: {reason}"
                     else:
-                        print(f"[Registro] RECHAZADO: CP '{cp_id}' no se encontró en la base de datos.")
                         response = "NACK: CP DESCONOCIDO"
+
             elif parts[0] == "REGISTER" and len(parts) == 2:
                 response = "NACK: TOKEN_REQUERIDO"
 

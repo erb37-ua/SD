@@ -129,6 +129,7 @@ services:
       - REGISTRY_JWT_SECRET=dev_registry_secret
     volumes:
       - ../Registry:/app/Registry
+      - ../Database/cp_database.json:/app/cp_database.json
     command: ["8080"]
 
   ev_w:

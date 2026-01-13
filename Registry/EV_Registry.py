@@ -6,6 +6,7 @@ import secrets
 import sys
 import os
 import time
+import json
 
 class CPRegisterRequest(BaseModel):
     cp_id: str
@@ -14,9 +15,45 @@ class CPRegisterRequest(BaseModel):
 JWT_SECRET = os.getenv("REGISTRY_JWT_SECRET", "dev_registry_secret")
 JWT_ALG = "HS256"
 
+DB_FILE = "/app/cp_database.json"
+
 registered_cps = {}
 
 app = FastAPI(title="EV Registry Service")
+
+def update_token_in_db(cp_id, token):
+    """Actualiza el token del CP en el JSON compartido."""
+    if not os.path.exists(DB_FILE):
+        print(f"[ERROR] No se encuentra la BD en {DB_FILE}")
+        return False
+        
+    try:
+        # 1. Leer archivo
+        with open(DB_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 2. Buscar CP y actualizar token
+        found = False
+        for cp in data:
+            if cp.get("id") == cp_id:
+                cp["auth_token"] = token # Guardamos el token
+                found = True
+                break
+        
+        if not found:
+            print(f"[WARN] El CP {cp_id} no existe en la BD. No se guardó el token.")
+            return False
+
+        # 3. Guardar cambios
+        with open(DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+            
+        print(f"[DB] Token guardado para {cp_id}")
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Fallo al escribir en BD: {e}")
+        return False
 
 @app.post("/register")
 def register_cp(request: CPRegisterRequest):
@@ -38,6 +75,8 @@ def register_cp(request: CPRegisterRequest):
     token = jwt.encode(token_payload, JWT_SECRET, algorithm=JWT_ALG)
     if isinstance(token, bytes):
         token = token.decode("utf-8")
+    
+    update_token_in_db(cp_id, token)
     
     registered_cps[cp_id] = {
         "location": request.location,

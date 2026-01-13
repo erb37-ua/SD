@@ -32,6 +32,7 @@ def load_weather_api_key():
         if resp.status_code == 200:
             data = resp.json()
             key = data.get("api_key")
+            print("Aleatorio: " + key)
             if key and len(key) >= 10:
                 return key
     except Exception as e:
@@ -62,7 +63,6 @@ def load_cp_locations():
             cp_locations = {"CP001": "Alicante"}
 
 def get_temperature(city, api_key):
-    # ... (Misma función que tenías antes) ...
     if not isinstance(city, str) or not city.strip():
         return None
     if not api_key:
@@ -78,7 +78,6 @@ def get_temperature(city, api_key):
     return 20.0
 
 def notify_central(cp_id, action):
-    # ... (Misma función que tenías antes) ...
     endpoint = "/api/alert" if action == "STOP" else "/api/resume"
     url = f"{CENTRAL_URL}{endpoint}"
     try:
@@ -88,7 +87,6 @@ def notify_central(cp_id, action):
         return False
 
 def send_telemetry(cp_id, temp):
-    # ... (Misma función que tenías antes) ...
     try:
         requests.post(f"{CENTRAL_URL}/api/weather", json={"cp_id": cp_id, "temperature": temp}, timeout=2)
     except:

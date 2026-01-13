@@ -3,13 +3,15 @@
     "id": "CP001",
     "location": "C/Italia 5",
     "city": "Oslo",
-    "price": 0.54
+    "price": 0.54,
+    "auth_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcF9pZCI6IkNQMDAxIiwibG9jYXRpb24iOiJBbGljYW50ZSIsImlhdCI6MTc2ODM0MDc4MCwiZXhwIjoxNzY4NDI3MTgwLCJub25jZSI6IjhlNjRiNzg1YjE4YzFiZjAifQ.k5DgB5Dc3aVhzkujXoNy6iLQdp3YLZKcQGhadcnyenE"
   },
   {
     "id": "CP002",
     "location": "Gran Via 2",
     "city": "Madrid",
-    "price": 0.54
+    "price": 0.54,
+    "auth_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcF9pZCI6IkNQMDAyIiwibG9jYXRpb24iOiJEb2NrLTEiLCJpYXQiOjE3NjgzNDA0NTQsImV4cCI6MTc2ODQyNjg1NCwibm9uY2UiOiI2ZTcxZTc3NWRlNTM2ZTcwIn0.Aop9McVQl3vPVhAsRNLUth4m8uh89vI3TcpQexrEZ74"
   },
   {
     "id": "CP003",
