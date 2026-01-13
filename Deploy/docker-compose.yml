@@ -127,7 +127,7 @@ services:
     container_name: ev_w
     environment:
       - CENTRAL_URL=http://central:8000
-      - OPENWEATHER_API_KEY=ff03ab7a472b855936e3c3f151e19c09
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
     depends_on:
       central: { condition: service_started }
     volumes:

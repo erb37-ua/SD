@@ -77,7 +77,7 @@ def charging_thread(driver_id, stop_evt):
     Simula la carga. Si 'stop_evt' se activa (por el Watchdog o manualmente),
     termina, envía el ticket y libera el CP.
     """
-    global is_charging, is_faulty, current_charging_driver
+    global is_charging, is_faulty, current_charging_driver, current_charge_stop_event
     
     with charge_lock:
         is_charging = True
@@ -121,10 +121,15 @@ def charging_thread(driver_id, stop_evt):
     
     if status_fin == "ERROR":
         send_kafka('telemetry', final_msg)
+    elif status_fin == "COMPLETED":
+        completion_msg = dict(final_msg)
+        completion_msg["ticket_sent"] = True
+        send_kafka('telemetry', completion_msg)
 
     with charge_lock:
         is_charging = False
         current_charging_driver = None
+    current_charge_stop_event = None
     
     print(f"[Carga] Finalizada. CP {cp_id_global} queda LIBRE (Activado).")
 
