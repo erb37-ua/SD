@@ -11,5 +11,3 @@ USER appuser
 
 COPY Weather /app/Weather
 COPY . .
-
-ENTRYPOINT ["python", "Weather/EV_W.py"]

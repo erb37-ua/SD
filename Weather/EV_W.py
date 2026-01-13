@@ -3,11 +3,11 @@ import requests
 import sys
 import os
 import json
-from urllib.parse import urlparse
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN POR DEFECTO ---
+# Se usarán si no se pasan parámetros al ejecutar
 CENTRAL_URL = os.getenv("CENTRAL_URL", "http://localhost:8000")
-DB_HOST = os.getenv("DB_HOST", "http://localhost:6000") # URL del nuevo servidor DB
+DB_HOST = os.getenv("DB_HOST", "http://localhost:6000") 
 
 cp_weather_state = {} 
 cp_locations = {}
@@ -32,7 +32,7 @@ def load_weather_api_key():
         if resp.status_code == 200:
             data = resp.json()
             key = data.get("api_key")
-            print("Aleatorio: " + key)
+            # print("Aleatorio: " + key)
             if key and len(key) >= 10:
                 return key
     except Exception as e:
@@ -53,7 +53,6 @@ def load_cp_locations():
                 city = item.get("city", "Alicante")
                 new_locs[cp_id] = city
             cp_locations = new_locs
-            # print(f"[Info] Ubicaciones actualizadas: {len(cp_locations)}")
         else:
             print(f"[Warn] Error obteniendo ubicaciones: {resp.status_code}")
     except Exception as e:
@@ -93,7 +92,22 @@ def send_telemetry(cp_id, temp):
         pass
 
 def main():
-    print(f"*** EV_W Iniciado (Conectado a DB: {DB_HOST}) ***")
+    global CENTRAL_URL, DB_HOST
+
+    if len(sys.argv) > 1:
+        host_ip = sys.argv[1]
+        host_ip = host_ip.replace("http://", "").replace("https://", "").strip("/")
+        
+        CENTRAL_URL = f"http://{host_ip}:8000"
+        DB_HOST = f"http://{host_ip}:6000"
+        print(f"[Args] Configuración IP sobreescrita: {host_ip}")
+    else:
+        print("[Args] Usando configuración por defecto (Env vars o Localhost)")
+
+    print(f"*** EV_W Iniciado ***")
+    print(f" -> Central: {CENTRAL_URL}")
+    print(f" -> DB Host: {DB_HOST}")
+    
     time.sleep(5) # Esperar a que DB arranque
 
     while True:
@@ -105,7 +119,6 @@ def main():
         else:
             print("[Info] Sin API Key válida. Simulando.")
 
-        # ... (Resto del bucle for igual que antes) ...
         print("\n--- Analizando Clima ---")
         for cp_id, city in cp_locations.items():
             if not is_valid_cp_id(cp_id): continue
