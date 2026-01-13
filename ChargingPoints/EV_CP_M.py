@@ -78,11 +78,8 @@ def get_registry_token(registry_url, cp_id, location, verify_ssl):
         return None
 
 def main():
-<<<<<<< HEAD
-    registry_ip_arg = None
+    registry_ip_arg = None  # --- NUEVO: Variable para IP Registry ---
 
-=======
->>>>>>> d0395ac964f9b77ee28ce7718eecedcbd33e2b1b
     def normalize_cp_id(value):
         return (value or "").strip().upper()
 
@@ -127,6 +124,7 @@ def main():
             print(f"Error: {exc}")
             return
         
+        # --- NUEVO: CAPTURAR 6º ARGUMENTO (IP REGISTRY) ---
         if len(sys.argv) >= 7:
             registry_ip_arg = sys.argv[6]
 
@@ -137,10 +135,12 @@ def main():
         central_port = os.getenv("CENTRAL_PORT")
         engine_port = os.getenv("ENGINE_PORT")
         
+        # --- NUEVO: Variable de entorno fallback ---
         registry_ip_arg = os.getenv("REGISTRY_HOST")
 
         if not all([central_ip, cp_id, engine_ip, central_port, engine_port]):
             print("Error: Faltan argumentos o variables de entorno.")
+            # --- NUEVO: Actualizado mensaje de uso ---
             print("Uso: python EV_CP_M.py <IP_Central> <Puerto_Central> <ID_CP> <IP_Engine> <Puerto_Engine> [IP_Registry]")
             return
         try:
@@ -149,23 +149,6 @@ def main():
         except ValueError as exc:
             print(f"Error: {exc}")
             return
-<<<<<<< HEAD
-=======
-        try:
-            central_port = validate_port(central_port, "CENTRAL_PORT")
-            engine_port = validate_port(engine_port, "ENGINE_PORT")
-        except ValueError as exc:
-            print(f"Error: {exc}")
-            return
-
-    try:
-        central_ip = validate_host(central_ip, "CENTRAL_HOST")
-        engine_ip = validate_host(engine_ip, "ENGINE_HOST")
-        cp_id = validate_cp_id(cp_id)
-    except ValueError as exc:
-        print(f"Error: {exc}")
-        return
->>>>>>> d0395ac964f9b77ee28ce7718eecedcbd33e2b1b
 
     try:
         central_ip = validate_host(central_ip, "CENTRAL_HOST")
@@ -178,6 +161,7 @@ def main():
     # Configuracion Registry URL
     registry_url = os.getenv("REGISTRY_URL", "https://registry:8080")
 
+    # --- NUEVO: Sobreescribir URL si se pasó el argumento IP ---
     if registry_ip_arg:
         # Asumimos puerto 8080 y https como en el código de referencia
         registry_url = f"https://{registry_ip_arg}:8080"
@@ -187,10 +171,7 @@ def main():
     verify_ssl = os.getenv("REGISTRY_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
     cert_path = os.getenv("REGISTRY_CERT_PATH")
     verify_setting = cert_path if cert_path else verify_ssl
-<<<<<<< HEAD
     
-=======
->>>>>>> d0395ac964f9b77ee28ce7718eecedcbd33e2b1b
     try:
         registry_url = validate_registry_url(registry_url)
     except ValueError as exc:
