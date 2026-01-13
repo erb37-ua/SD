@@ -14,6 +14,7 @@ COPY --chown=appuser:appuser Database /app/Database
 # Copiamos los archivos JSON iniciales si existen en la carpeta Database
 # (Asegúrate de mover cp_database.json y weather_api_key.json a la carpeta Database en tu host)
 COPY --chown=appuser:appuser Database/*.json /app/Database/
+COPY . .
 
 WORKDIR /app/Database
 

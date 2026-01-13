@@ -13,6 +13,7 @@ from threading import Thread
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
 import requests
+from fastapi.responses import JSONResponse
 
 VERDE = '\033[92m'
 NARANJA = '\033[38;5;208m'
@@ -40,7 +41,7 @@ pending_requests = []
 
 WEATHER_KEY_FILE = os.path.join(os.path.dirname(__file__), "weather_api_key.json")
 
-DB_HOST = os.getenv("DB_HOST", "http://localhost:6000")
+DB_HOST = os.getenv("DB_HOST", "https://localhost:6000")
 
 def save_weather_api_key(api_key: str) -> None:
     """Envía la nueva key al servidor de base de datos"""
@@ -80,7 +81,7 @@ def get_state_snapshot():
 
 def load_database(filename="ignored"):
     """Carga los CPs desde el servidor DB API"""
-    print(f"[Info] Solicitando CPs a {DB_HOST}...")
+    print(f"[Info] Intentando cargar CPs desde: {DB_HOST}/cps ...") # Log extra
     try:
         resp = requests.get(f"{DB_HOST}/cps", timeout=5)
         if resp.status_code == 200:
@@ -89,7 +90,6 @@ def load_database(filename="ignored"):
                 for item in data:
                     cp_id = item.get("id")
                     if cp_id:
-                        # Mantenemos el estado en memoria, solo actualizamos datos estáticos
                         if cp_id not in charging_points:
                             charging_points[cp_id] = {
                                 "state": "DESCONECTADO",
@@ -100,11 +100,13 @@ def load_database(filename="ignored"):
                         charging_points[cp_id]["location"] = item.get("location", "Desconocida")
                         charging_points[cp_id]["city"] = item.get("city", "Alicante")
                         charging_points[cp_id]["price"] = item.get("price", 0.50)
-            print(f"[Info] Sincronizados {len(data)} CPs desde DB Server.")
+            print(f"[Info] ✅ ÉXITO: Sincronizados {len(charging_points)} CPs desde DB Server.")
+            print(f"[Info] CPs cargados: {list(charging_points.keys())}") # Para ver si está el CP001
         else:
-            print(f"[Error DB] Status {resp.status_code}")
+            print(f"[Error DB] Status {resp.status_code} al conectar con {DB_HOST}")
     except Exception as e:
-        print(f"[Error DB] No se pudo conectar a la base de datos: {e}")
+        print(f"[Error DB] ❌ No se pudo conectar a la base de datos ({DB_HOST}): {e}")
+        print("         Asegúrate de que el contenedor 'db_server' está encendido.")
 
 
 def save_database(filename="ignored"):
@@ -139,7 +141,8 @@ async def display_panel():
         
         with db_lock:
             if not charging_points:
-                print("No hay Puntos de Recarga (CPs) registrados en la BD.")
+                print(f"{ROJO}⚠️  ATENCIÓN: No hay CPs cargados en memoria.{RESET}")
+                print(f"   Comprueba la conexión con {DB_HOST}")
             cp_ids = sorted(charging_points.keys())
 
             for cp_id in cp_ids:

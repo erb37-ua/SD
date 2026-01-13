@@ -57,7 +57,7 @@ services:
     ports: 
       - "5050:5050"
       - "8000:8000"
-    command: ["python", "EV_Central.py", "5050", "broker:9092"]
+    command: ["python", "Central/EV_Central.py", "5050", "broker:9092"]
 
   ev_cp_e:
     build:
@@ -94,7 +94,7 @@ services:
       - CP_ID=CP007
       - ENGINE_HOST=ev_cp_e_001
       - ENGINE_PORT=7000
-      - REGISTRY_URL=https://registry:8080
+      #- REGISTRY_URL=https://registry:8080
       - REGISTRY_VERIFY_SSL=false
       - CP_LOCATION=Dock-1
     volumes:

@@ -78,8 +78,6 @@ def get_registry_token(registry_url, cp_id, location, verify_ssl):
         return None
 
 def main():
-    registry_ip_arg = None  # --- NUEVO: Variable para IP Registry ---
-
     def normalize_cp_id(value):
         return (value or "").strip().upper()
 
@@ -126,7 +124,7 @@ def main():
         
         # --- NUEVO: CAPTURAR 6º ARGUMENTO (IP REGISTRY) ---
         if len(sys.argv) >= 7:
-            registry_ip_arg = sys.argv[6]
+            registry_ip = sys.argv[6]
 
     else:
         central_ip = os.getenv("CENTRAL_HOST")
@@ -136,7 +134,7 @@ def main():
         engine_port = os.getenv("ENGINE_PORT")
         
         # --- NUEVO: Variable de entorno fallback ---
-        registry_ip_arg = os.getenv("REGISTRY_HOST")
+        registry_ip = os.getenv("REGISTRY_HOST")
 
         if not all([central_ip, cp_id, engine_ip, central_port, engine_port]):
             print("Error: Faltan argumentos o variables de entorno.")
@@ -159,12 +157,12 @@ def main():
         return
 
     # Configuracion Registry URL
-    registry_url = os.getenv("REGISTRY_URL", "https://registry:8080")
+    registry_url = os.getenv("REGISTRY_URL", f"https://{registry_ip}:8080")
 
     # --- NUEVO: Sobreescribir URL si se pasó el argumento IP ---
-    if registry_ip_arg:
+    if registry_ip:
         # Asumimos puerto 8080 y https como en el código de referencia
-        registry_url = f"https://{registry_ip_arg}:8080"
+        registry_url = f"https://{registry_ip}:8080"
         print(f"[{cp_id}] Configurado Registry manual en: {registry_url}")
 
     cp_location = os.getenv("CP_LOCATION", "unknown")
