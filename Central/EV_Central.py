@@ -12,6 +12,7 @@ import uvicorn
 from threading import Thread
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
+import requests
 
 VERDE = '\033[92m'
 NARANJA = '\033[38;5;208m'
@@ -39,14 +40,19 @@ pending_requests = []
 
 WEATHER_KEY_FILE = os.path.join(os.path.dirname(__file__), "weather_api_key.json")
 
+DB_HOST = os.getenv("DB_HOST", "http://localhost:6000")
+
 def save_weather_api_key(api_key: str) -> None:
+    """Envía la nueva key al servidor de base de datos"""
     payload = {
         "api_key": api_key,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
-    with weather_key_lock:
-        with open(WEATHER_KEY_FILE, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
+    try:
+        requests.post(f"{DB_HOST}/weather-key", json=payload, timeout=5)
+        print(f"[DB] Weather Key actualizada en el servidor.")
+    except Exception as e:
+        print(f"[Error DB] Al guardar weather key: {e}")
 
 def log_audit(evento, ip, accion):
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -72,45 +78,37 @@ def get_state_snapshot():
     with db_lock:
         return {cp_id: dict(data) for cp_id, data in charging_points.items()}
 
-def load_database(filename="cp_database.json"):
-    """
-    Carga los CPs desde un archivo JSON.
-    Estructura esperada: [{"id":"CP001", "location":"...", "city":"...", "price":0.5}, ...]
-    """
-    print(f"[Info] Cargando base de datos de CPs desde {filename}...")
+def load_database(filename="ignored"):
+    """Carga los CPs desde el servidor DB API"""
+    print(f"[Info] Solicitando CPs a {DB_HOST}...")
     try:
-        if not os.path.exists(filename):
-            print(f"[Error] No se encontró {filename}. Empezando con 0 CPs.")
-            return
-
-        with open(filename, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
+        resp = requests.get(f"{DB_HOST}/cps", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
             with db_lock:
                 for item in data:
                     cp_id = item.get("id")
                     if cp_id:
-                        charging_points[cp_id] = {
-                            "location": item.get("location", "Desconocida"),
-                            "city": item.get("city", "Alicante"),
-                            "price": item.get("price", 0.50),
-                            "state": "DESCONECTADO",
-                            "driver": None,
-                            "consumo": 0.0,
-                            "importe": 0.0
-                        }
-        print(f"[Info] Cargados {len(charging_points)} CPs.")
-
-    except json.JSONDecodeError:
-        print(f"[Error] El archivo {filename} no es un JSON válido.")
+                        # Mantenemos el estado en memoria, solo actualizamos datos estáticos
+                        if cp_id not in charging_points:
+                            charging_points[cp_id] = {
+                                "state": "DESCONECTADO",
+                                "driver": None,
+                                "consumo": 0.0,
+                                "importe": 0.0
+                            }
+                        charging_points[cp_id]["location"] = item.get("location", "Desconocida")
+                        charging_points[cp_id]["city"] = item.get("city", "Alicante")
+                        charging_points[cp_id]["price"] = item.get("price", 0.50)
+            print(f"[Info] Sincronizados {len(data)} CPs desde DB Server.")
+        else:
+            print(f"[Error DB] Status {resp.status_code}")
     except Exception as e:
-        print(f"[Error] Al cargar {filename}: {e}")
+        print(f"[Error DB] No se pudo conectar a la base de datos: {e}")
 
 
-def save_database(filename="cp_database.json"):
-    """
-    Guarda el estado actual (incluyendo cambios de ciudad) en el JSON.
-    """
+def save_database(filename="ignored"):
+    """Envía el estado actual de los datos estáticos al servidor DB"""
     try:
         data_list = []
         with db_lock:
@@ -123,11 +121,10 @@ def save_database(filename="cp_database.json"):
                 }
                 data_list.append(item)
         
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data_list, f, indent=2)
-        print(f"[Info] Base de datos actualizada con nueva ciudad.")
+        requests.post(f"{DB_HOST}/cps", json=data_list, timeout=5)
+        print(f"[DB] Datos guardados en servidor remoto.")
     except Exception as e:
-        print(f"[Error] Al guardar base de datos: {e}")
+        print(f"[Error DB] Al guardar datos: {e}")
 
 
 async def display_panel():
@@ -587,6 +584,18 @@ def start_web_panel(http_host: str, http_port: int, kafka_broker: str):
         weather_key_setter=save_weather_api_key
     )
 
+    @app.get("/api/config/weather-key")
+    def get_weather_key():
+        try:
+            # Central actúa como proxy o Weather puede ir directo (mejor directo)
+            # Pero mantenemos compatibilidad:
+            r = requests.get(f"{DB_HOST}/weather-key", timeout=2)
+            if r.status_code == 200:
+                 return r.json()
+        except Exception:
+            pass
+        return JSONResponse(status_code=404, content={"status": "ERROR"})
+        
     from fastapi.staticfiles import StaticFiles
     web_dir = os.path.join(os.path.dirname(__file__), "web")
     if os.path.isdir(web_dir):

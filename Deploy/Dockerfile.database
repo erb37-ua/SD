@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instalamos FastAPI y Uvicorn
+RUN pip install --no-cache-dir fastapi uvicorn pydantic requests
+
+# Creamos usuario sin privilegios
+RUN useradd -m appuser
+USER appuser
+
+# Copiamos el código del servidor DB
+COPY --chown=appuser:appuser Database /app/Database
+# Copiamos los archivos JSON iniciales si existen en la carpeta Database
+# (Asegúrate de mover cp_database.json y weather_api_key.json a la carpeta Database en tu host)
+COPY --chown=appuser:appuser Database/*.json /app/Database/
+
+WORKDIR /app/Database
+
+# Exponemos el puerto 6000
+EXPOSE 6000
+
+CMD ["python", "EV_Database.py"]
