@@ -162,7 +162,7 @@ def main():
     # --- NUEVO: Sobreescribir URL si se pasó el argumento IP ---
     if registry_ip:
         # Asumimos puerto 8080 y https como en el código de referencia
-        registry_url = f"https://{registry_ip}:8080"
+        #registry_url = f"https://{registry_ip}:8080"
         print(f"[{cp_id}] Configurado Registry manual en: {registry_url}")
 
     cp_location = os.getenv("CP_LOCATION", "unknown")

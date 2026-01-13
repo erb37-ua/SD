@@ -13,3 +13,5 @@ echo [INFO] Iniciando contenedores...
 cd Deploy
 docker compose build
 docker compose up -d
+timeout 5 
+docker exec -u 0 -it central chown -R appuser:appuser /app/Central
